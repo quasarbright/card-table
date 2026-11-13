@@ -8,8 +8,9 @@ const DEG = 180 / Math.PI;
 export const HAND_R = FELT_R - 62;          // where other seats' hands sit
 export const OWN_HAND_R = FELT_R - 66;      // the viewer's own hand, a bit closer to them and bigger
 export const OWN_HAND_SCALE = 1.3;
+export const GRIP_REACH = CARD_H / 2 + 17; // from a stack's middle to its count tab
 const HELD_TILT = 38, LOOK_TILT = 28; // degrees: a held card, a face-down card being looked at
-const FAN_COUNT = 5, FAN_STEP = 15;   // a face-up stack shows this many corners, this far apart
+const FAN_COUNT = 5, FAN_STEP = 12 / DEG, FAN_SHIFT = 8; // a face-up stack shows this many corners
 const TURN_MS = 220, STACK_TURN_MS = 460;
 
 export function createView(root, { viewer = "s0", interactive = true } = {}) {
@@ -82,21 +83,19 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
       const carried = o.drag?.pile === p.id;
       const px = carried ? o.drag.x : p.x, py = carried ? o.drag.y : p.y, prot = carried ? o.drag.rot : p.rot;
       const k = p.cards.length;
-      const gap = p.spread ? Math.min(22, 640 / Math.max(1, k - 1)) : 0;
-      // a face-up stack fans its top few cards so their corners show
+      // a face-up stack fans its top few cards about their bottom-left corners, the way you'd
+      // thumb a stack open, so each one's index shows
       let fan = 0;
-      if (!p.spread) while (fan < FAN_COUNT && fan < k && st.cards[p.cards[k - 1 - fan]].faceUp) fan++;
-      const fanFrom = k - fan, fanShift = -(Math.max(fan, 1) - 1) * FAN_STEP / 2;
+      while (fan < FAN_COUNT && fan < k && st.cards[p.cards[k - 1 - fan]].faceUp) fan++;
+      const fanFrom = k - fan, shift = Math.max(0, fan - 1) * FAN_SHIFT;
       const c = Math.cos(prot), s = Math.sin(prot);
       p.cards.forEach((id, i) => {
-        let ox, oy;
-        if (p.spread) { ox = (i - (k - 1) / 2) * gap; oy = 0; }
-        else {
-          const d = Math.min(i, 40) * 0.22; // a stack's thickness
-          ox = fanShift + Math.max(0, i - fanFrom) * FAN_STEP - d; oy = -d;
-        }
+        const d = Math.min(i, 40) * 0.22; // a stack's thickness
+        const a = fan > 1 ? -(k - 1 - Math.max(i, fanFrom)) * FAN_STEP : 0;
+        const ox = -CARD_W / 2 + (CARD_W / 2) * Math.cos(a) + (CARD_H / 2) * Math.sin(a) + shift - d;
+        const oy = CARD_H / 2 + (CARD_W / 2) * Math.sin(a) - (CARD_H / 2) * Math.cos(a) - d;
         out.set(id, {
-          x: px + ox * c - oy * s, y: py + ox * s + oy * c, rot: prot,
+          x: px + ox * c - oy * s, y: py + ox * s + oy * c, rot: prot + a,
           z: (carried ? 5000 : pi * 60) + i, scale: 1, lifted: carried,
         });
       });
@@ -240,11 +239,11 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
     for (const p of Object.values(st.piles)) {
       // a card being carried off the stack no longer counts
       const rest = p.cards.filter((id) => !o.drag?.cards?.includes(id));
-      if (!rest.length || (rest.length < 2 && !p.spread)) continue;
+      if (rest.length < 2) continue;
       const top = place.get(rest.at(-1)), bottom = place.get(rest[0]);
       const cx = (top.x + bottom.x) / 2, cy = (top.y + bottom.y) / 2;
       const down = view.screenDir(0, 1);
-      const reach = CARD_H / 2 + 12;
+      const reach = GRIP_REACH;
       const g = el("div", "ct-grip", gripLayer);
       g.dataset.pile = p.id;
       g.textContent = rest.length;

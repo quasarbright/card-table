@@ -9,11 +9,12 @@
   <script type="module" src="https://quasarbright.github.io/sketches/shared/cohesion.js"></script>
 
   <!-- identity: a card table. Green felt, a walnut rail, ivory cards with red lattice backs.
-       Young Serif for the title and card indices, Instrument Sans for the UI, JetBrains Mono
-       for stack counts. The one motif: a card tips toward whoever holds or looks at it. -->
+       Young Serif for the title, card indices and every number; Instrument Sans for the UI.
+       Menus are printed on the cards' ivory stock; the bottom bar is a strip of the rail's walnut.
+       The one motif: a card tips toward whoever holds or looks at it. -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Young+Serif&family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Young+Serif&family=Instrument+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 
   <style>
     :root {
@@ -28,7 +29,7 @@
       --accent-hi: #dd5d52;
       --on-accent: #f2ede0;
       --font-ui: "Instrument Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-      --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+      --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
       --font-display: "Young Serif", Georgia, serif;
       --felt: #1d4a35;
       --walnut: #3b2719;
@@ -102,9 +103,9 @@
     .ct-grip {
       transform-origin: 0 0;
       position: absolute; left: 0; top: 0; cursor: grab;
-      font: 500 calc(11px / var(--s, 1)) var(--font-mono); color: var(--text);
-      padding: .15em .7em; border-radius: 999px;
-      background: rgba(10,20,15,.72); border: calc(1px / var(--s, 1)) solid rgba(242,237,224,.18);
+      font: calc(12px / var(--s, 1)) var(--font-display); color: var(--ivory);
+      padding: .1em .65em .15em; border-radius: 999px; font-variant-numeric: tabular-nums;
+      background: rgba(8,24,16,.6); border: calc(1px / var(--s, 1)) solid rgba(242,237,224,.14);
     }
     .ct-grip:hover { border-color: rgba(242,237,224,.5); }
     .ct-grip.ct-target { border-color: var(--ivory); background: rgba(242,237,224,.18); }
@@ -126,30 +127,86 @@
       box-shadow: 0 2px 6px rgba(0,0,0,.35);
     }
 
-    /* ---- right-click menu ---- */
+    /* ---- the menu: printed on the same ivory stock as the cards, red ink for the keys ---- */
     .ct-menu {
-      position: fixed; z-index: 20; min-width: 200px; padding: 5px;
-      background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
-      box-shadow: 0 14px 40px rgba(0,0,0,.5); font-size: .9rem;
+      --ink: #1d1c22; --red: #a8322f;
+      position: fixed; z-index: 20; min-width: 196px; padding: 6px;
+      background: var(--ivory); color: var(--ink); border-radius: 9px;
+      box-shadow: inset 0 0 0 3px var(--ivory), inset 0 0 0 4px rgba(168,50,47,.35),
+        0 1px 0 rgba(255,255,255,.4) inset, 0 18px 40px rgba(0,0,0,.55), 0 2px 6px rgba(0,0,0,.35);
+      font: 500 .92rem var(--font-ui);
+      animation: ct-menu-in .14s cubic-bezier(.2,.8,.2,1);
+      transform-origin: 0 0;
     }
-    .ct-menu button.ct-item {
-      display: flex; width: 100%; justify-content: space-between; gap: 18px; align-items: baseline;
-      background: none; border: 0; color: var(--text); font: inherit; text-align: left;
-      padding: 7px 10px; border-radius: 6px; cursor: pointer;
+    @keyframes ct-menu-in { from { opacity: 0; transform: scale(.94) translateY(-4px); } }
+    .ct-menu button { font: inherit; color: inherit; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+    .ct-menu button:focus-visible { outline: 2px solid var(--red); outline-offset: 1px; }
+    .ct-item {
+      display: flex; width: 100%; justify-content: space-between; gap: 22px; align-items: baseline;
+      background: none; border: 0; text-align: left; padding: 8px 12px; border-radius: 5px;
     }
-    .ct-menu button.ct-item:hover, .ct-menu button.ct-item:focus-visible { background: var(--panel-2); outline: none; }
-    .ct-menu kbd { font: 500 .78rem var(--font-mono); color: var(--muted); }
-    .ct-menu hr { border: 0; border-top: 1px solid var(--border); margin: 4px 6px; }
-    .ct-deal { padding: 8px 10px 6px; }
-    .ct-deal-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
-    .ct-deal-row .ct-count { font: 500 1.1rem var(--font-mono); min-width: 2.2ch; text-align: center; }
-    .ct-step { width: 32px; height: 32px; padding: 0; }
-    .ct-deal .btn-primary { margin-left: auto; }
+    .ct-item:hover { background: rgba(168,50,47,.1); }
+    .ct-menu kbd { font: 1rem var(--font-display); color: var(--red); }
+    .ct-menu hr { border: 0; height: 1px; margin: 5px 12px; background: rgba(29,28,34,.14); }
 
-    /* ---- bottom bar ---- */
-    .control-bar { font-family: var(--font-ui); flex-wrap: wrap; justify-content: center; width: max-content; max-width: calc(100vw - 24px); }
-    .control-bar select { width: auto; padding: 6px 8px; font: inherit; font-size: .85rem; }
-    .ct-label { color: var(--muted); font-size: .8rem; margin-left: 6px; }
+    /* Deal… and Split…: a counter on the same card */
+    .ct-pop { padding: 10px 10px 6px; width: 228px; }
+    .ct-pop-title { font-size: .8rem; color: rgba(29,28,34,.62); line-height: 1.35; }
+    .ct-stepper { display: flex; align-items: center; gap: 10px; margin: 10px 0 14px; }
+    .ct-step {
+      width: 34px; height: 34px; padding: 0; border-radius: 50%;
+      display: grid; place-items: center; line-height: 1; font-size: 1.25rem !important;
+      background: transparent; border: 1.5px solid rgba(29,28,34,.55);
+    }
+    .ct-step:hover:not(:disabled) { background: rgba(29,28,34,.07); }
+    .ct-step:disabled { opacity: .3; cursor: default; }
+    .ct-count { font: 2.1rem/1 var(--font-display); min-width: 1.6ch; text-align: center; font-variant-numeric: tabular-nums; }
+    .ct-unit { font-size: .85rem; color: rgba(29,28,34,.62); }
+    .ct-pop-actions { display: flex; flex-direction: column; gap: 6px; }
+    .ct-act {
+      padding: 9px 12px; border-radius: 6px; font-weight: 600 !important;
+      background: transparent; border: 1.5px solid rgba(29,28,34,.55);
+    }
+    .ct-act:hover { background: rgba(29,28,34,.07); }
+    .ct-act-ink { background: var(--red); border-color: var(--red); color: var(--ivory) !important; }
+    .ct-act-ink:hover { background: #bd3c37; }
+
+    /* ---- bottom bar: a strip of the table's walnut ---- */
+    .control-bar.ct-bar {
+      font-family: var(--font-ui); gap: 4px; padding: 5px; flex-wrap: wrap; justify-content: center;
+      width: max-content; max-width: calc(100vw - 24px); box-sizing: border-box;
+      background: linear-gradient(#4d3424, #3a2618); border-radius: 14px;
+      box-shadow: inset 0 1px 0 rgba(255,225,190,.13), inset 0 -1px 0 rgba(0,0,0,.3), 0 10px 28px rgba(0,0,0,.45);
+    }
+    .ct-bar button { font: inherit; color: var(--ivory); cursor: pointer; -webkit-tap-highlight-color: transparent; }
+    .ct-bar button:focus-visible { outline: 2px solid var(--ivory); outline-offset: 2px; }
+    .ct-bar-btn, .ct-bar about-modal > button.btn {
+      background: transparent; border: 0; border-radius: 10px; padding: 8px 14px; font-size: .9rem; font-weight: 500;
+      color: var(--ivory);
+    }
+    .ct-bar-btn:hover, .ct-bar about-modal > button.btn:hover { background: rgba(255,230,200,.1); }
+    .ct-group { display: flex; align-items: center; gap: 8px; padding: 3px 6px 3px 12px; border-radius: 10px; background: rgba(0,0,0,.2); }
+    .ct-label { color: rgba(242,237,224,.62); font-size: .8rem; }
+    .ct-seg { display: flex; gap: 2px; }
+    .ct-seg button {
+      width: 30px; height: 30px; padding: 0; border: 0; border-radius: 8px; background: transparent;
+      font: 1.05rem var(--font-display); color: rgba(242,237,224,.75);
+    }
+    .ct-seg button:hover { background: rgba(255,230,200,.1); color: var(--ivory); }
+    .ct-seg button[aria-checked="true"] { background: var(--ivory); color: #1d1c22; box-shadow: 0 1px 2px rgba(0,0,0,.4); }
+    .ct-sitters { display: flex; gap: 2px; }
+    .ct-sitters button { position: relative; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 8px; background: transparent; }
+    .ct-sitters button::before {
+      content: ""; position: absolute; inset: 9px; border-radius: 50%; background: var(--seat);
+      transition: inset .12s;
+    }
+    .ct-sitters button:hover::before { inset: 7px; }
+    .ct-sitters button[aria-checked="true"]::before { inset: 5px; box-shadow: 0 0 0 2px #3a2618, 0 0 0 3.5px var(--seat); }
+    .ct-sitters button:hover::after {
+      content: attr(data-tip); position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%);
+      white-space: nowrap; font-size: .78rem; padding: 3px 8px; border-radius: 5px;
+      background: var(--ivory); color: #1d1c22; box-shadow: 0 4px 12px rgba(0,0,0,.4); pointer-events: none;
+    }
 
     /* ---- about modal ---- */
     .ct-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 14px 0 4px; }
@@ -162,32 +219,39 @@
       .ct-head { top: 10px; left: 14px; }
       .ct-head h1 { font-size: 1.3rem; }
       .ct-hint { font-size: .78rem; }
-      .control-bar { bottom: 34px; }
+      .control-bar.ct-bar { bottom: 32px; gap: 3px; }
       .ct-label { display: none; }
+      .ct-group { padding: 2px 4px; }
+      .ct-bar-btn, .ct-bar about-modal > button.btn { padding: 8px 10px; }
+      .ct-seg button, .ct-sitters button { width: 28px; }
     }
   </style>
 </head>
 <body>
   <div class="ct-head">
     <h1>Card Table</h1>
-    <p class="ct-hint" id="hint">Drag cards anywhere. Click a card or a stack for flip, shuffle, deal and the rest. Over a card, F flips it and S shuffles its stack.</p>
+    <p class="ct-hint" id="hint">Drag a card to move it, or press and hold a stack to move all of it. Click for everything else. F flips, even mid-drag.</p>
   </div>
 
   <div id="table"></div>
 
-  <div class="control-bar">
-    <button class="btn" id="gather" title="Collect every card, from the table and all hands, into one face-down deck in the middle">gather cards</button>
-    <span class="ct-label">players</span>
-    <select id="players" title="How many seats are at the table. Cards in a removed seat's hand go back to the middle."></select>
-    <span class="ct-label">view as</span>
-    <select id="viewer" title="Sit in another seat to see the table the way that player does: their hand, the cards only they can see."></select>
+  <div class="control-bar ct-bar">
+    <button class="ct-bar-btn" id="gather" title="Collect every card, from the table and all hands, into one face-down deck in the middle">Gather cards</button>
+    <div class="ct-group" title="How many seats are at the table. Cards in a removed seat's hand go back to the middle.">
+      <span class="ct-label">Players</span>
+      <div class="ct-seg" id="players" role="radiogroup" aria-label="Players"></div>
+    </div>
+    <div class="ct-group" title="Sit in another seat to see the table the way that player does: their hand, and the cards only they can see.">
+      <span class="ct-label">View as</span>
+      <div class="ct-sitters" id="viewer" role="radiogroup" aria-label="View as"></div>
+    </div>
     <about-modal label="about">
       <h2 class="title">Card Table</h2>
       <p class="intro">A table and a deck of cards with no game built in. You do with the cards what you'd do at a real table, and the rules stay with the players.</p>
 
       <div class="section-label">What the table knows</div>
       <p>Every card is somewhere: in a stack on the table, or in someone's hand. A loose card is a stack of one. On top of that, each card is either face up or face down, and a face-down card can be seen by one player who is looking at it.</p>
-      <p>That's enough for most card games. Solitaire is stacks and spreads. Poker is hands, a deck, and face-up cards in the middle. Hearts is dealing and passing cards between hands. None of those rules live here.</p>
+      <p>That's enough for most card games. Solitaire is stacks, some face up and some face down. Poker is hands, a deck, and face-up cards in the middle. Hearts is dealing and passing cards between hands. None of those rules live here.</p>
 
       <div class="section-label">Who sees what</div>
       <p>Each player sees a different table. Face-up cards look the same to everyone. A card in your hand shows its face to you and its back to everyone else. A face-down card someone is looking at shows its face only to that player.</p>
@@ -197,7 +261,7 @@
         <figure><div class="ct-mini" data-seat="s1"></div><figcaption>what Player 2 sees</figcaption></figure>
       </div>
       <p class="ct-caption" id="ct-about-caption"></p>
-      <p>Both pictures are drawn from the same table by the same code the main page uses, once per seat. You can try it yourself with <b>view as</b> at the bottom of the page.</p>
+      <p>Both pictures are drawn from the same table by the same code the main page uses, once per seat. You can try it yourself: pick another seat under <b>View as</b> at the bottom of the page.</p>
 
       <div class="section-label">Sharing a table</div>
       <p>Every change to the table is a small message: move these cards there, flip this one, shuffle that stack into this order. Applying the same messages in the same order always gives the same table. A shuffle picks its new order before the message is sent, so the message carries the result rather than the dice roll. That's what will let several players share one table later: each browser applies everyone's messages and they all end up in the same place.</p>

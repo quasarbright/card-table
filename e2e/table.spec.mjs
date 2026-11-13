@@ -68,7 +68,7 @@ test("a card dragged into your hand shows you its face and others its back", asy
   await dragTo(page, await center(page, cardSel(top)), await at(page, 500, 870));
   expect((await state(page)).hands.s0).toEqual([top]);
   expect(await showsFace(page, top)).toBe(true);
-  await page.selectOption("#viewer", "s1");
+  await page.click('#viewer [data-seat="s1"]');
   await page.waitForTimeout(700);
   expect(await showsFace(page, top)).toBe(false);
   // pass it to Player 3's hand, as Player 2
@@ -129,10 +129,10 @@ test("keys act on what's under the pointer: S shuffles, P looks, F flips", async
   expect((await state(page)).cards[newTop].privateTo).toBe("s0");
   expect(await showsFace(page, newTop)).toBe(true);
   await expect(page.locator(cardSel(newTop))).toHaveClass(/ct-ringed/);
-  await page.selectOption("#viewer", "s1");
+  await page.click('#viewer [data-seat="s1"]');
   await page.waitForTimeout(700);
   expect(await showsFace(page, newTop)).toBe(false);
-  await page.selectOption("#viewer", "s0");
+  await page.click('#viewer [data-seat="s0"]');
   await page.waitForTimeout(700);
 
   // on a stack, ⇧F turns just the top card
@@ -161,13 +161,13 @@ test("F over a stack turns the whole stack, again on every press", async ({ page
   let s = await state(page);
   expect(s.piles.deck.cards.at(-1)).toBe(bottom);
   expect(s.piles.deck.cards.every((id) => s.cards[id].faceUp)).toBe(true);
-  // a face-up stack fans its top five so their corners show
-  const xs = await page.evaluate(() => {
+  // a face-up stack fans its top five so their corners show: each turned 12° past the one below
+  const rots = await page.evaluate(() => {
     const st = window.cardTable.state, place = window.cardTable.view.placement(st);
-    return st.piles.deck.cards.slice(-6).map((id) => place.get(id).x);
+    return st.piles.deck.cards.slice(-6).map((id) => place.get(id).rot * 180 / Math.PI);
   });
-  for (let i = 2; i < 6; i++) expect(xs[i] - xs[i - 1]).toBeGreaterThan(12);
-  expect(Math.abs(xs[1] - xs[0])).toBeLessThan(1);
+  for (let i = 2; i < 6; i++) expect(rots[i] - rots[i - 1]).toBeCloseTo(12, 3);
+  expect(rots[1] - rots[0]).toBeCloseTo(0, 3);
   // without moving the mouse: twice more
   await page.keyboard.press("f");
   await settle(page);
@@ -216,7 +216,7 @@ test("the table survives a reload; gather brings everything back", async ({ page
 test("fewer players: removed hands go back to the middle", async ({ page }) => {
   await open(page);
   await page.evaluate(() => window.cardTable.deal("deck", 2));
-  await page.selectOption("#players", "2");
+  await page.click('#players [data-n="2"]');
   await settle(page);
   const s = await state(page);
   expect(s.seats).toHaveLength(2);
@@ -238,4 +238,73 @@ test("the about modal draws the same table from two seats", async ({ page }) => 
   await expect(page.locator("#ct-about-caption")).not.toHaveText("");
   await page.keyboard.press("Escape");
   expect(errors).toEqual([]);
+});
+
+test("deal the whole stack from the menu", async ({ page }) => {
+  await open(page);
+  const g = await center(page, ".ct-grip");
+  await page.mouse.click(g.x, g.y);
+  await page.getByRole("button", { name: /Deal…/ }).click();
+  await page.getByRole("button", { name: "Deal all 52" }).click();
+  await page.waitForTimeout(52 * 70 + 600);
+  const s = await state(page);
+  expect(s.piles.deck).toBeUndefined();
+  expect(Object.values(s.hands).map((h) => h.length)).toEqual([13, 13, 13, 13]);
+});
+
+test("split a stack into three", async ({ page }) => {
+  await open(page);
+  const g = await center(page, ".ct-grip");
+  await page.mouse.click(g.x, g.y);
+  await page.getByRole("button", { name: /Split…/ }).click();
+  await page.locator('.ct-step[data-d="1"]').click();
+  await page.getByRole("button", { name: "Split into 3" }).click();
+  await settle(page);
+  const piles = Object.values((await state(page)).piles);
+  expect(piles.map((p) => p.cards.length).sort()).toEqual([17, 17, 18]);
+  expect(await page.locator(".ct-grip").count()).toBe(3);
+});
+
+test("press and hold a stack, then drag: the whole stack moves", async ({ page }) => {
+  await open(page);
+  const c = await center(page, cardSel(await topOf(page, "deck")));
+  await page.mouse.move(c.x, c.y);
+  await page.mouse.down();
+  await page.waitForTimeout(450);
+  const to = await at(page, 650, 420);
+  await page.mouse.move(to.x, to.y, { steps: 8 });
+  await page.mouse.up();
+  await settle(page);
+  const s = await state(page);
+  expect(s.piles.deck.cards).toHaveLength(52);
+  expect(Math.hypot(s.piles.deck.x - 650, s.piles.deck.y - 420)).toBeLessThan(20);
+});
+
+test("F while dragging flips what you carry", async ({ page }) => {
+  await open(page);
+  const top = await topOf(page, "deck");
+  const c = await center(page, cardSel(top));
+  await page.mouse.move(c.x, c.y);
+  await page.mouse.down();
+  await page.mouse.move(c.x + 40, c.y - 60, { steps: 4 });
+  await page.keyboard.press("f");
+  await page.waitForTimeout(150);
+  expect((await state(page)).cards[top].faceUp).toBe(true);
+  const to = await at(page, 330, 380);
+  await page.mouse.move(to.x, to.y, { steps: 6 });
+  await page.mouse.up();
+  await settle(page);
+  const s = await state(page);
+  expect(s.cards[top].faceUp).toBe(true);
+  expect(s.piles.deck.cards).toHaveLength(51);
+  // a held stack too
+  const g = await center(page, cardSel(await topOf(page, "deck")));
+  await page.mouse.move(g.x, g.y);
+  await page.mouse.down();
+  await page.waitForTimeout(450);
+  await page.keyboard.press("f");
+  await page.mouse.up();
+  await settle(page);
+  const after = await state(page);
+  expect(after.piles.deck.cards.every((id) => after.cards[id].faceUp)).toBe(true);
 });

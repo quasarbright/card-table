@@ -9,7 +9,7 @@
 // state = {
 //   seats: [{ id, name, color }],                 // in order around the table
 //   cards: { [id]: { id, rank, suit, faceUp, privateTo } },
-//   piles: { [id]: { id, x, y, rot, z, spread, cards: [bottom … top] } },
+//   piles: { [id]: { id, x, y, rot, z, cards: [bottom … top] } },
 //   hands: { [seatId]: [cardId, …] },             // left to right, as the owner sees them
 //   nextZ,                                        // stacking order for piles
 // }
@@ -56,7 +56,7 @@ export function newTable(nSeats = 4) {
   const order = Object.keys(cards).reverse();
   return {
     seats, cards, hands,
-    piles: { deck: { id: "deck", x: TABLE_R, y: TABLE_R, rot: 0, z: 1, spread: false, cards: order } },
+    piles: { deck: { id: "deck", x: TABLE_R, y: TABLE_R, rot: 0, z: 1, cards: order } },
     nextZ: 2,
   };
 }
@@ -106,7 +106,8 @@ export function tiltedToward(state, cardId) {
 // { type: "setPrivate", cards: [ids], seat } seat = null makes them hidden from everyone again
 // { type: "shuffle", pile, order }           order: the pile's cards, bottom → top
 // { type: "deal", pile, count, seats }       count cards to each seat's hand, one at a time
-// { type: "setSpread", pile, spread }        stacked, or spread out in a row
+// { type: "split", pile, parts: [{ id, x, y, rot }] }  cut into parts.length stacks; parts[0]
+//                                            keeps the pile's id and gets the bottom cards
 // { type: "gather", id, x, y, rot }          every card into one face-down stack
 // { type: "setSeats", n }                    hands of removed seats go to the middle
 
@@ -153,7 +154,7 @@ const ACTIONS = {
     } else if (to.newPile) {
       const { id, x, y, rot = 0 } = to.newPile;
       if (s.piles[id]) throw new Error(`pile ${id} exists`);
-      s.piles[id] = { id, x, y, rot, z: 0, spread: false, cards: [...cards] };
+      s.piles[id] = { id, x, y, rot, z: 0, cards: [...cards] };
       raise(s, id);
     }
   },
@@ -194,14 +195,23 @@ const ACTIONS = {
       ACTIONS.moveCards(s, { cards: [id], to: { hand: seat } });
     }
   },
-  setSpread(s, { pile, spread }) { s.piles[pile].spread = spread; raise(s, pile); },
+  split(s, { pile, parts }) {
+    const cards = s.piles[pile].cards, n = parts.length;
+    if (parts[0].id !== pile || n < 2 || n > cards.length) throw new Error("bad split");
+    delete s.piles[pile];
+    parts.forEach(({ id, x, y, rot = 0 }, k) => {
+      const from = Math.round((k * cards.length) / n), to = Math.round(((k + 1) * cards.length) / n);
+      s.piles[id] = { id, x, y, rot, z: 0, cards: cards.slice(from, to) };
+      raise(s, id);
+    });
+  },
   gather(s, { id, x, y, rot = 0 }) {
     const all = [...Object.values(s.piles).sort((a, b) => a.z - b.z).flatMap((p) => p.cards),
       ...Object.values(s.hands).flat()];
     s.piles = {};
     for (const seat of Object.keys(s.hands)) s.hands[seat] = [];
     for (const c of Object.values(s.cards)) { c.faceUp = false; c.privateTo = null; }
-    s.piles[id] = { id, x, y, rot, z: 0, spread: false, cards: all };
+    s.piles[id] = { id, x, y, rot, z: 0, cards: all };
     raise(s, id);
   },
   setSeats(s, { n }) {
@@ -217,7 +227,7 @@ const ACTIONS = {
     if (leftover.length) {
       for (const id of leftover) s.cards[id].faceUp = false;
       const id = `returned${s.nextZ}`;
-      s.piles[id] = { id, x: TABLE_R, y: TABLE_R, rot: 0, z: 0, spread: false, cards: leftover };
+      s.piles[id] = { id, x: TABLE_R, y: TABLE_R, rot: 0, z: 0, cards: leftover };
       raise(s, id);
     }
   },

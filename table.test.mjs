@@ -127,3 +127,21 @@ test("removing seats returns their hands to the middle", () => {
 function mulberry(a) {
   return () => { a |= 0; a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
 }
+
+test("split cuts a stack into even parts, bottom cards staying with the original id", () => {
+  const s0 = newTable(4);
+  const deck = s0.piles.deck.cards;
+  const s = apply(s0, { type: "split", pile: "deck", parts: [
+    { id: "deck", x: 400, y: 500 }, { id: "b", x: 500, y: 500 }, { id: "c", x: 600, y: 500 }] });
+  assert.deepEqual([s.piles.deck, s.piles.b, s.piles.c].map((p) => p.cards.length), [17, 18, 17]);
+  assert.deepEqual([...s.piles.deck.cards, ...s.piles.b.cards, ...s.piles.c.cards], deck);
+  assert.equal(s.piles.deck.x, 400);
+  checkConservation(s);
+  assert.throws(() => apply(s0, { type: "split", pile: "deck", parts: [{ id: "x", x: 0, y: 0 }, { id: "y", x: 0, y: 0 }] }));
+});
+
+test("dealing a whole stack: the pile is used up and the counts differ by at most one", () => {
+  const s = apply(newTable(5), { type: "deal", pile: "deck", count: Math.ceil(52 / 5), seats: ["s0", "s1", "s2", "s3", "s4"] });
+  assert.equal(s.piles.deck, undefined);
+  assert.deepEqual(Object.values(s.hands).map((h) => h.length), [11, 11, 10, 10, 10]);
+});
