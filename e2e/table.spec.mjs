@@ -308,3 +308,42 @@ test("F while dragging flips what you carry", async ({ page }) => {
   const after = await state(page);
   expect(after.piles.deck.cards.every((id) => after.cards[id].faceUp)).toBe(true);
 });
+
+test("carrying a card over your hand opens a gap where it will land", async ({ page }) => {
+  const errors = await open(page);
+  await page.evaluate(() => window.cardTable.dispatch({ type: "deal", pile: "deck", count: 5, seats: ["s0"] }));
+  await settle(page);
+  const hand = (await state(page)).hands.s0;
+  const xOf = (id) => page.locator(cardSel(id)).boundingBox().then((b) => b.x);
+  const before = await Promise.all(hand.map(xOf));
+  const top = await topOf(page, "deck");
+  await page.mouse.move(...Object.values(await center(page, cardSel(top))));
+  await page.mouse.down();
+  // over the middle card's visible strip
+  const mid = await page.locator(cardSel(hand[2])).boundingBox();
+  await page.mouse.move(mid.x + 12, mid.y + mid.height * 0.4, { steps: 10 });
+  await page.waitForTimeout(500);
+  await expect(page.locator(".ct-slot.ct-on")).toHaveCount(1);
+  const during = await Promise.all(hand.map(xOf));
+  // cards left of the gap step left, cards right of it step right
+  expect(during[0]).toBeLessThan(before[0]);
+  expect(during[4]).toBeGreaterThan(before[4]);
+  await page.mouse.up();
+  await settle(page);
+  expect((await state(page)).hands.s0.indexOf(top)).toBe(2);
+  await expect(page.locator(".ct-slot.ct-on")).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+
+test("the card under the pointer lifts", async ({ page }) => {
+  await open(page);
+  await page.evaluate(() => window.cardTable.dispatch({ type: "deal", pile: "deck", count: 4, seats: ["s0"] }));
+  await settle(page);
+  const id = (await state(page)).hands.s0[1];
+  const b = await page.locator(cardSel(id)).boundingBox();
+  await page.mouse.move(b.x + 12, b.y + b.height * 0.4);
+  await page.waitForTimeout(400);
+  await expect(page.locator(cardSel(id))).toHaveClass(/ct-hover/);
+  const lifted = await page.locator(`${cardSel(id)} .ct-inner`).evaluate((e) => parseFloat(e.style.translate.split(" ")[1]));
+  expect(lifted).toBeLessThan(-5);
+});

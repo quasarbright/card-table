@@ -2,7 +2,7 @@
 // (see table.mjs), which are applied and drawn. Everything here is local for now; the
 // actions are already the messages a shared table would send.
 import { newTable, apply, shuffledOrder, locate, handCenter, seatAngle, MAX_SEATS, RANKS, SUITS, CARD_W, CARD_H, TABLE_R, FELT_R } from "./table.mjs";
-import { createView, HAND_R, OWN_HAND_R, GRIP_REACH } from "./view.mjs";
+import { createView, HAND_R, OWN_HAND_R, OWN_HAND_SCALE, GRIP_REACH, handGap } from "./view.mjs";
 import { suitDefs } from "./faces.mjs";
 import { startAboutDiagram } from "./about.mjs";
 
@@ -15,7 +15,7 @@ const view = createView(document.getElementById("table"), { viewer: me });
 
 let drag = null;      // what's being carried
 let pending = null;   // a press that hasn't become a drag yet
-let hovered = null;   // { card } or { pile }: what keyboard shortcuts act on
+let hovered = null;   // { card } or { pile }: what keyboard shortcuts act on, and what lifts
 let menu = null;
 
 // ---- state ---------------------------------------------------------------------------------
@@ -37,6 +37,7 @@ function dispatch(action, renderOpts = {}) {
 function draw(o = {}) {
   view.render(state, {
     ...o,
+    hover: drag || pending ? null : hovered?.card,
     drag: drag && drag.active ? drag : null,
     target: drag?.target,
     presence: drag?.active ? [{ seat: me, cards: drag.cards ?? state.piles[drag.pile]?.cards ?? [] }] : [],
@@ -138,7 +139,8 @@ function dropTarget(x, y) {
     }
   }
   if (best) return best;
-  // into a hand: inside its zone, at the slot the pointer is over
+  // into a hand: inside its zone, at the gap nearest the pointer. `slot` counts among the cards
+  // that stay; `index` is the same place counted before the carried cards leave (moveCards)
   const n = state.seats.length;
   for (let i = 0; i < n; i++) {
     const seat = state.seats[i], own = seat.id === me;
@@ -146,12 +148,14 @@ function dropTarget(x, y) {
     const right = { x: Math.sin(a), y: -Math.cos(a) }, out = { x: Math.cos(a), y: Math.sin(a) };
     const along = (x - c.x) * right.x + (y - c.y) * right.y, across = (x - c.x) * out.x + (y - c.y) * out.y;
     if (Math.abs(along) > (own ? 150 : 115) || Math.abs(across) > (own ? 75 : 60)) continue;
-    let index = 0;
-    for (const id of state.hands[seat.id]) {
-      const q = place.get(id);
-      if ((q.x - c.x) * right.x + (q.y - c.y) * right.y < along) index++;
-    }
-    return { hand: seat.id, index };
+    const hand = state.hands[seat.id], rest = hand.filter((id) => !carried.has(id));
+    // each card in the closed-up hand shows its left strip (the next card covers the rest);
+    // the pointer goes after every card whose strip middle it's past
+    const r = rest.length, gap = handGap(own, r), halfW = (CARD_W / 2) * (own ? OWN_HAND_SCALE : 1);
+    let slot = 0;
+    for (let j = 0; j < r; j++) if ((j - (r - 1) / 2) * gap - halfW + gap / 2 < along) slot = j + 1;
+    const index = slot < rest.length ? hand.indexOf(rest[slot]) : hand.length;
+    return { hand: seat.id, slot, index };
   }
   return null;
 }
@@ -190,7 +194,7 @@ addEventListener("mousedown", (e) => { if (drag && e.button === 2) { e.preventDe
 
 tableEl.addEventListener("pointermove", (e) => {
   if (drag && e.pointerId !== drag.pointerId) return;
-  if (!pending && !drag) { hovered = targetOf(e.target); return; }
+  if (!pending && !drag) { setHover(targetOf(e.target)); return; }
   const p = view.toTable(e.clientX, e.clientY);
   if (pending && !drag) {
     if (Math.hypot(e.clientX - pending.sx, e.clientY - pending.sy) < (pending.touch ? 8 : 4)) return;
@@ -206,6 +210,7 @@ tableEl.addEventListener("pointermove", (e) => {
 });
 
 function startDrag(t, at) {
+  hovered = null;
   const place = view.placement(state);
   if (t.whole) {
     const pile = state.piles[t.pile];
@@ -254,7 +259,13 @@ tableEl.addEventListener("pointercancel", (e) => {
   if (drag && e.pointerId !== drag.pointerId) return;
   clearTimeout(pending?.timer); pending = null; drag = null; draw();
 });
-tableEl.addEventListener("pointerleave", () => { if (!drag) hovered = null; });
+tableEl.addEventListener("pointerleave", () => { if (!drag) setHover(null); });
+// the card under the pointer lifts a little; redraw only when that changes
+function setHover(t) {
+  const was = hovered?.card;
+  hovered = t;
+  if (t?.card !== was && !drag && !pending) draw();
+}
 
 tableEl.addEventListener("contextmenu", (e) => {
   e.preventDefault();
