@@ -16,7 +16,6 @@ const view = createView(document.getElementById("table"), { viewer: me });
 let drag = null;      // what's being carried
 let pending = null;   // a press that hasn't become a drag yet
 let hovered = null;   // { card } or { pile }: what keyboard shortcuts act on
-let lastTap = null;   // for double-click / double-tap
 let menu = null;
 
 // ---- state ---------------------------------------------------------------------------------
@@ -86,21 +85,28 @@ function newId() { return `p${Date.now().toString(36)}${(idCounter++).toString(3
 // what a press on this element means: a card (the top one, for a stack) or a whole pile
 function targetOf(elem) {
   const cardEl = elem?.closest?.(".ct-card");
-  if (cardEl) {
-    let id = cardEl.dataset.id;
-    const where = locate(state, id);
-    if (!where) return null;
-    if (where.pile) {
-      const p = state.piles[where.pile];
-      if (!p.spread) id = p.cards.at(-1);
-      return { card: id, pile: p.id };
-    }
-    return { card: id, hand: where.hand };
-  }
+  if (cardEl) return cardTarget(cardEl.dataset.id);
   const grip = elem?.closest?.(".ct-grip");
   if (grip && state.piles[grip.dataset.pile]) return { pile: grip.dataset.pile, whole: true };
   return null;
 }
+function cardTarget(id) {
+  const where = locate(state, id);
+  if (!where) return null;
+  if (where.pile) {
+    const p = state.piles[where.pile];
+    return { card: p.spread ? id : p.cards.at(-1), pile: p.id };
+  }
+  return { card: id, hand: where.hand };
+}
+// the same target, after the table changed under it (a stack flipped, a card moved)
+function refresh(t) {
+  if (!t) return null;
+  if (t.whole) return state.piles[t.pile] ? t : null;
+  return cardTarget(t.card);
+}
+// a stack of more than one card, stacked up (not spread out)
+const isStack = (t) => !t.hand && !!state.piles[t.pile] && state.piles[t.pile].cards.length > 1 && !state.piles[t.pile].spread;
 
 // where carried cards would land if dropped at (x, y), in table coordinates
 function dropTarget(x, y) {
@@ -148,19 +154,18 @@ function dropTarget(x, y) {
 
 const tableEl = document.getElementById("table");
 
+const keyOf = (t) => (t.whole ? `pile:${t.pile}` : t.card);
+
 tableEl.addEventListener("pointerdown", (e) => {
+  // a press on the card whose menu is open just closes it
+  const reopen = menu && menu.forKey;
   if (menu && !menu.contains(e.target)) closeMenu();
   if (e.button !== 0) return;
   const t = targetOf(e.target);
   if (!t) return;
   e.preventDefault();
   tableEl.setPointerCapture(e.pointerId);
-  pending = { ...t, sx: e.clientX, sy: e.clientY, pointerId: e.pointerId, touch: e.pointerType !== "mouse" };
-  if (pending.touch) {
-    pending.timer = setTimeout(() => {
-      if (pending && !drag) { const p = pending; pending = null; openMenu(p, p.sx, p.sy); }
-    }, 480);
-  }
+  pending = { ...t, sx: e.clientX, sy: e.clientY, pointerId: e.pointerId, touch: e.pointerType !== "mouse", wasOpen: reopen === keyOf(t) };
 });
 
 tableEl.addEventListener("pointermove", (e) => {
@@ -168,7 +173,6 @@ tableEl.addEventListener("pointermove", (e) => {
   const p = view.toTable(e.clientX, e.clientY);
   if (pending && !drag) {
     if (Math.hypot(e.clientX - pending.sx, e.clientY - pending.sy) < (pending.touch ? 8 : 4)) return;
-    clearTimeout(pending.timer);
     startDrag(pending, view.toTable(pending.sx, pending.sy));
     pending = null;
   }
@@ -193,12 +197,9 @@ function startDrag(t, at) {
 
 tableEl.addEventListener("pointerup", (e) => {
   if (pending) {
-    clearTimeout(pending.timer);
+    // a click (no drag): the actions for what was clicked
     const t = pending; pending = null;
-    const now = performance.now();
-    const key = t.card ?? t.pile;
-    if (lastTap && lastTap.key === key && now - lastTap.time < 350) { lastTap = null; flipTarget(t); }
-    else lastTap = { key, time: now };
+    if (!t.wasOpen) openMenu(refresh(t), t.sx, t.sy);
     return;
   }
   if (!drag) return;
@@ -218,7 +219,7 @@ tableEl.addEventListener("pointerup", (e) => {
     else dispatch({ type: "moveCards", cards: d.cards, to: { newPile: { id: newId(), x: d.x, y: d.y, rot: d.rot + (Math.random() - .5) * 0.06 } } });
   }
 });
-tableEl.addEventListener("pointercancel", () => { clearTimeout(pending?.timer); pending = null; drag = null; draw(); });
+tableEl.addEventListener("pointercancel", () => { pending = null; drag = null; draw(); });
 tableEl.addEventListener("pointerleave", () => { if (!drag) hovered = null; });
 
 tableEl.addEventListener("contextmenu", (e) => {
@@ -230,8 +231,12 @@ tableEl.addEventListener("contextmenu", (e) => {
 // ---- the actions, as the menu and keys offer them -----------------------------------------
 
 function flipTarget(t) {
-  if (t.whole) dispatch({ type: "flipPile", pile: t.pile });
+  if (t.whole) flipStack(t.pile);
   else dispatch({ type: "flip", cards: [t.card] });
+}
+function flipStack(pileId) {
+  const p = state.piles[pileId];
+  dispatch({ type: "flipPile", pile: pileId }, { stackFlip: { cards: new Set(p.cards), x: p.x, y: p.y } });
 }
 function toggleLook(t) {
   const c = state.cards[t.card];
@@ -267,21 +272,28 @@ function openMenu(t, x, y) {
   menu.className = "ct-menu";
   const items = [];
   const item = (label, key, fn) => items.push({ label, key, fn });
-  const sep = () => items.push(null);
+  const sep = () => { if (items.length && items.at(-1)) items.push(null); };
+  menu.forKey = keyOf(t);
   const pile = t.pile ? state.piles[t.pile] : null;
-  if (t.card) {
-    const c = state.cards[t.card];
-    if (t.hand) {
-      item(c.faceUp ? "Hide it again" : "Show everyone", "F", () => flipTarget(t));
-      if (state.hands[t.hand].length > 1) item("Sort hand", "", () => sortHand(t.hand));
-    } else {
-      item("Flip", "F", () => flipTarget(t));
-      if (!c.faceUp) item(c.privateTo === me ? "Stop looking" : "Look at it", "P", () => toggleLook(t));
+  const c = t.card ? state.cards[t.card] : null;
+  const look = () => item(c.privateTo === me ? "Stop looking" : "Look at it", "P", () => toggleLook(t));
+  if (t.hand) {
+    item(c.faceUp ? "Hide it again" : "Show everyone", "F", () => flipTarget(t));
+    if (state.hands[t.hand].length > 1) item("Sort hand", "", () => sortHand(t.hand));
+  } else if (isStack(t)) {
+    // F turns the whole stack over; the top card on its own is ⇧F
+    item("Flip stack", "F", () => flipStack(pile.id));
+    if (c) {
+      item("Flip top card", "⇧F", () => flipTarget({ card: t.card, pile: pile.id }));
+      if (!c.faceUp) look();
     }
+  } else if (c) {
+    item("Flip", "F", () => flipTarget(t));
+    if (!c.faceUp) look();
   }
   if (pile && pile.cards.length > 1) {
-    if (items.length) sep();
-    item("Flip stack", "⇧F", () => flipTarget({ pile: pile.id, whole: true }));
+    if (pile.spread) { sep(); item("Flip all", "⇧F", () => flipStack(pile.id)); }
+    sep();
     item("Shuffle", "S", () => shufflePile(pile.id));
     item(pile.spread ? "Stack up" : "Spread out", "", () => dispatch({ type: "setSpread", pile: pile.id, spread: !pile.spread }));
     item("Deal…", "", () => showDeal(pile.id), true);
@@ -337,27 +349,30 @@ function showDeal(pileId) {
 
 addEventListener("keydown", (e) => {
   if (e.key === "Escape") { closeMenu(); return; }
-  if (e.metaKey || e.ctrlKey || e.altKey || drag || !hovered) return;
+  if (e.metaKey || e.ctrlKey || e.altKey || drag) return;
   if (e.target.closest?.("input, select, textarea")) return;
-  const t = hovered;
-  if (t.card && !locate(state, t.card)) return;
+  // what's under the pointer, as the table is now: pressing F again flips again
+  const t = hovered = refresh(hovered);
+  if (!t) return;
   const k = e.key.toLowerCase();
   if (k === "f") {
-    if (e.shiftKey && t.pile && state.piles[t.pile]) flipTarget({ pile: t.pile, whole: true });
-    else if (t.card) flipTarget(t);
-    else flipTarget(t);
+    if (e.repeat) return e.preventDefault();
+    // a stack turns over as a whole; ⇧F turns just its top card (or, spread out, all of them)
+    const stack = isStack(t), spread = !t.hand && state.piles[t.pile]?.spread;
+    if (t.whole || (stack && !e.shiftKey) || (spread && e.shiftKey)) flipStack(t.pile);
+    else if (t.card) flipTarget({ card: t.card });
   } else if (k === "p" && t.card && !t.hand) toggleLook(t);
   else if (k === "s" && t.pile && state.piles[t.pile]?.cards.length > 1) shufflePile(t.pile);
   else return;
   e.preventDefault();
-  hovered = null;
+  closeMenu();
 });
 
 // ---- start ---------------------------------------------------------------------------------
 
 if (matchMedia("(pointer: coarse)").matches) {
   document.getElementById("hint").textContent =
-    "Drag cards anywhere. Double-tap to flip one. Press and hold a card or a stack's count for shuffle, deal and the rest.";
+    "Drag cards anywhere. Tap a card or a stack for flip, shuffle, deal and the rest.";
 }
 fillSelects();
 addEventListener("resize", relayout);

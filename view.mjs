@@ -9,6 +9,8 @@ export const HAND_R = FELT_R - 62;          // where other seats' hands sit
 export const OWN_HAND_R = FELT_R - 66;      // the viewer's own hand, a bit closer to them and bigger
 export const OWN_HAND_SCALE = 1.3;
 const HELD_TILT = 38, LOOK_TILT = 28; // degrees: a held card, a face-down card being looked at
+const FAN_COUNT = 5, FAN_STEP = 15;   // a face-up stack shows this many corners, this far apart
+const TURN_MS = 220, STACK_TURN_MS = 460;
 
 export function createView(root, { viewer = "s0", interactive = true } = {}) {
   root.classList.add("ct-view");
@@ -25,7 +27,7 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
   const cardEls = new Map();   // card id → element
   const shown = new Map();     // card id → "face" | "back" (what the viewer currently sees)
   let frame = { cx: 0, cy: 0, s: 1, rot: 0 };
-  let state = null, opts = {};
+  let state = null, opts = {}, lastPlace = new Map();
 
   const view = {
     root, stage,
@@ -81,11 +83,18 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
       const px = carried ? o.drag.x : p.x, py = carried ? o.drag.y : p.y, prot = carried ? o.drag.rot : p.rot;
       const k = p.cards.length;
       const gap = p.spread ? Math.min(22, 640 / Math.max(1, k - 1)) : 0;
+      // a face-up stack fans its top few cards so their corners show
+      let fan = 0;
+      if (!p.spread) while (fan < FAN_COUNT && fan < k && st.cards[p.cards[k - 1 - fan]].faceUp) fan++;
+      const fanFrom = k - fan, fanShift = -(Math.max(fan, 1) - 1) * FAN_STEP / 2;
       const c = Math.cos(prot), s = Math.sin(prot);
       p.cards.forEach((id, i) => {
         let ox, oy;
         if (p.spread) { ox = (i - (k - 1) / 2) * gap; oy = 0; }
-        else { const d = Math.min(i, 40) * 0.22; ox = -d; oy = -d; } // a stack's thickness
+        else {
+          const d = Math.min(i, 40) * 0.22; // a stack's thickness
+          ox = fanShift + Math.max(0, i - fanFrom) * FAN_STEP - d; oy = -d;
+        }
         out.set(id, {
           x: px + ox * c - oy * s, y: py + ox * s + oy * c, rot: prot,
           z: (carried ? 5000 : pi * 60) + i, scale: 1, lifted: carried,
@@ -122,7 +131,8 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
     return i < 0 ? null : { seat: st.seats[i], angle: seatAngle(i, st.seats.length) };
   }
 
-  // st: table state; o: { drag, presence: [{ seat, cards }], delays: Map, target, instant }
+  // st: table state; o: { drag, presence: [{ seat, cards }], delays: Map, target, instant,
+  //   stackFlip: { cards: Set, x, y } (a stack just turned over, and its middle) }
   function render(st, o = {}) {
     state = st; opts = o;
     const n = st.seats.length;
@@ -149,13 +159,22 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
         cardEls.set(id, e);
       }
       const look = canSee(st, id, viewer) ? "face" : "back";
-      if (shown.get(id) !== look) {
+      // a whole stack turning over turns as one block, about the stack's middle
+      const whole = !o.instant && shown.has(id) && o.stackFlip?.cards.has(id);
+      if (shown.get(id) !== look || whole) {
         const inner = e.firstChild;
         const html = look === "face" ? faceSVG(card.rank, card.suit) : backSVG();
         if (shown.has(id) && !o.instant) {
           // turning over: squash, swap the picture at the edge-on moment, unsquash
-          inner.classList.remove("ct-turn"); void inner.offsetWidth; inner.classList.add("ct-turn");
-          setTimeout(() => { if (shown.get(id) === look) inner.innerHTML = html; }, 110);
+          inner.style.transformOrigin = "";
+          if (whole) {
+            const was = lastPlace.get(id) ?? pl;
+            const dx = o.stackFlip.x - was.x, dy = o.stackFlip.y - was.y, c = Math.cos(-was.rot), s = Math.sin(-was.rot);
+            inner.style.transformOrigin = `${CARD_W / 2 + dx * c - dy * s}px ${CARD_H / 2 + dx * s + dy * c}px`;
+          }
+          inner.classList.remove("ct-turn", "ct-stackturn"); void inner.offsetWidth;
+          inner.classList.add(whole ? "ct-stackturn" : "ct-turn");
+          setTimeout(() => { if (shown.get(id) === look) inner.innerHTML = html; }, (whole ? STACK_TURN_MS : TURN_MS) / 2);
         } else inner.innerHTML = html;
         shown.set(id, look);
       }
@@ -173,7 +192,9 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
       }
       e.style.transform = `translate(${pl.x - CARD_W / 2}px, ${pl.y - CARD_H / 2}px) rotate(${pl.rot * DEG}deg) scale(${pl.scale})${tilt}`;
       e.style.zIndex = pl.z;
-      e.style.transitionDelay = o.delays?.get(id) ? `${o.delays.get(id)}ms` : "";
+      // a turning stack reorders and re-fans when it's edge-on, so the swap doesn't show
+      const delay = o.delays?.get(id) || (o.stackFlip?.cards.has(id) && !o.instant ? STACK_TURN_MS / 2 : 0);
+      e.style.transitionDelay = delay ? `${delay}ms` : "";
       e.classList.toggle("ct-lifted", !!pl.lifted);
       e.classList.toggle("ct-carried", !!(o.drag && (o.drag.cards?.includes(id) || pl.lifted)));
       e.classList.toggle("ct-target", o.target?.card === id);
@@ -184,6 +205,7 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
       e.classList.toggle("ct-ringed", !!ring);
       e.classList.toggle("ct-touched", touch.has(id));
     }
+    lastPlace = place;
     for (const [id, e] of cardEls) if (!live.has(id)) { e.remove(); cardEls.delete(id); shown.delete(id); }
     if (interactive) { renderGrips(st, place, o); renderZones(st, o); renderTags(st, place, o); }
   }

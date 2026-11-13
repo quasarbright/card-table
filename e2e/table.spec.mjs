@@ -34,7 +34,7 @@ async function dragTo(page, from, to) {
 const at = (page, x, y) => page.evaluate(([x, y]) => window.cardTable.view.toScreen(x, y), [x, y]);
 const showsFace = (page, id) => page.locator(`${cardSel(id)} .ct-index`).count().then((n) => n > 0);
 
-test("drag the top card off the deck, then double-click to flip it", async ({ page }) => {
+test("drag the top card off the deck, then click it and pick Flip", async ({ page }) => {
   const errors = await open(page);
   const top = await topOf(page, "deck");
   await dragTo(page, await center(page, cardSel(top)), await at(page, 300, 350));
@@ -44,8 +44,12 @@ test("drag the top card off the deck, then double-click to flip it", async ({ pa
   expect(pile.id).not.toBe("deck");
   expect(Math.hypot(pile.x - 300, pile.y - 350)).toBeLessThan(15);
   expect(await showsFace(page, top)).toBe(false);
+  // a drag doesn't leave a menu behind
+  await expect(page.locator(".ct-menu")).toHaveCount(0);
 
-  await page.mouse.dblclick(...Object.values(await center(page, cardSel(top))));
+  const c = await center(page, cardSel(top));
+  await page.mouse.click(c.x, c.y);
+  await page.getByRole("button", { name: /^Flip/ }).click();
   await settle(page);
   expect((await state(page)).cards[top].faceUp).toBe(true);
   expect(await showsFace(page, top)).toBe(true);
@@ -131,14 +135,62 @@ test("keys act on what's under the pointer: S shuffles, P looks, F flips", async
   await page.selectOption("#viewer", "s0");
   await page.waitForTimeout(700);
 
+  // on a stack, ⇧F turns just the top card
   const c2 = await center(page, cardSel(newTop));
   await page.mouse.move(c2.x, c2.y);
   await page.mouse.move(c2.x + 1, c2.y);
-  await page.keyboard.press("f");
+  await page.keyboard.press("Shift+F");
   await settle(page);
   const s = await state(page);
   expect(s.cards[newTop].faceUp).toBe(true);
   expect(s.cards[newTop].privateTo).toBe(null);
+  expect(s.cards[s.piles.deck.cards[0]].faceUp).toBe(false);
+});
+
+test("F over a stack turns the whole stack, again on every press", async ({ page }) => {
+  const errors = await open(page);
+  const bottom = (await state(page)).piles.deck.cards[0];
+  const c = await center(page, cardSel(await topOf(page, "deck")));
+  await page.mouse.move(c.x, c.y);
+  await page.mouse.move(c.x + 1, c.y);
+  await page.keyboard.press("f");
+  await page.waitForTimeout(150);
+  // mid-turn the old top is still on top: the reorder waits for the edge-on moment
+  await expect(page.locator(".ct-stackturn")).not.toHaveCount(0);
+  await settle(page);
+  let s = await state(page);
+  expect(s.piles.deck.cards.at(-1)).toBe(bottom);
+  expect(s.piles.deck.cards.every((id) => s.cards[id].faceUp)).toBe(true);
+  // a face-up stack fans its top five so their corners show
+  const xs = await page.evaluate(() => {
+    const st = window.cardTable.state, place = window.cardTable.view.placement(st);
+    return st.piles.deck.cards.slice(-6).map((id) => place.get(id).x);
+  });
+  for (let i = 2; i < 6; i++) expect(xs[i] - xs[i - 1]).toBeGreaterThan(12);
+  expect(Math.abs(xs[1] - xs[0])).toBeLessThan(1);
+  // without moving the mouse: twice more
+  await page.keyboard.press("f");
+  await settle(page);
+  await page.keyboard.press("f");
+  await settle(page);
+  s = await state(page);
+  expect(s.piles.deck.cards.at(-1)).toBe(bottom);
+  expect(s.cards[bottom].faceUp).toBe(true);
+  expect(errors).toEqual([]);
+});
+
+test("click opens the actions, a second click closes them", async ({ page }) => {
+  await open(page);
+  const c = await center(page, cardSel(await topOf(page, "deck")));
+  await page.mouse.click(c.x, c.y);
+  await expect(page.getByRole("button", { name: /Flip stack/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Flip top card/ })).toBeVisible();
+  await page.mouse.click(c.x, c.y);
+  await expect(page.locator(".ct-menu")).toHaveCount(0);
+  // the count tab too
+  const g = await center(page, ".ct-grip");
+  await page.mouse.click(g.x, g.y);
+  await expect(page.getByRole("button", { name: /Shuffle/ })).toBeVisible();
 });
 
 test("dragging the count moves the whole stack", async ({ page }) => {

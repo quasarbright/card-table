@@ -62,7 +62,7 @@
     .ct-card {
       position: absolute; left: 0; top: 0; width: 70px; height: 98px;
       transform-origin: 50% 50%; cursor: grab;
-      transition: transform .34s cubic-bezier(.2,.8,.2,1);
+      transition: transform .34s cubic-bezier(.2,.8,.2,1), z-index 0s;
     }
     .ct-card.ct-carried { transition: none; cursor: grabbing; }
     .ct-inner {
@@ -79,6 +79,11 @@
     .ct-court { font: 30px var(--font-display); }
     .ct-turn { animation: ct-turn .22s ease-in-out; }
     @keyframes ct-turn { 50% { transform: scaleX(0); } }
+    /* a whole stack: lifts, turns edge-on about its middle, comes down the other side */
+    .ct-stackturn { animation: ct-stackturn .46s cubic-bezier(.45,0,.55,1); }
+    @keyframes ct-stackturn {
+      50% { transform: scale(0.02, 1.1); box-shadow: 0 18px 24px rgba(0,0,0,.5); }
+    }
     .ct-riffle { animation: ct-riffle .32s ease-in-out; }
     @keyframes ct-riffle { 25% { translate: -5px 0; } 50% { translate: 5px 0; } 75% { translate: -3px 0; } }
 
@@ -165,7 +170,7 @@
 <body>
   <div class="ct-head">
     <h1>Card Table</h1>
-    <p class="ct-hint" id="hint">Drag cards anywhere. Double-click to flip one. Right-click a card or a stack's count for shuffle, deal and the rest.</p>
+    <p class="ct-hint" id="hint">Drag cards anywhere. Click a card or a stack for flip, shuffle, deal and the rest. Over a card, F flips it and S shuffles its stack.</p>
   </div>
 
   <div id="table"></div>
