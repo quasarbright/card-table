@@ -11,6 +11,7 @@
 //   cards: { [id]: { id, rank, suit, faceUp, privateTo } },
 //   piles: { [id]: { id, x, y, rot, z, messy, cards: [bottom … top] } },  // messy: top few show
 //   hands: { [seatId]: [cardId, …] },             // left to right, as the owner sees them
+//   shownHands: { [seatId]: true },               // hands laid flat, face up, for everyone
 //   nextZ,                                        // stacking order for piles
 // }
 //
@@ -58,6 +59,7 @@ export function newTable(nSeats = 4) {
     seats, cards, hands,
     piles: { deck: { id: "deck", x: TABLE_R, y: TABLE_R, rot: 0, z: 1, cards: order } },
     nextZ: 2,
+    shownHands: {},
   };
 }
 
@@ -83,7 +85,7 @@ export function canSee(state, cardId, seatId) {
   const c = state.cards[cardId];
   if (c.faceUp) return true;
   const where = locate(state, cardId);
-  if (where?.hand) return where.hand === seatId;
+  if (where?.hand) return where.hand === seatId || !!state.shownHands?.[where.hand];
   return c.privateTo === seatId;
 }
 
@@ -91,7 +93,7 @@ export function canSee(state, cardId, seatId) {
 export function tiltedToward(state, cardId) {
   const c = state.cards[cardId];
   const where = locate(state, cardId);
-  if (where?.hand) return c.faceUp ? null : where.hand;
+  if (where?.hand) return c.faceUp || state.shownHands?.[where.hand] ? null : where.hand;
   return c.faceUp ? null : c.privateTo;
 }
 
@@ -106,6 +108,7 @@ export function tiltedToward(state, cardId) {
 // { type: "setPrivate", cards: [ids], seat } seat = null makes them hidden from everyone again
 // { type: "shuffle", pile, order }           order: the pile's cards, bottom → top
 // { type: "deal", pile, count, seats }       count cards to each seat's hand, one at a time
+// { type: "setHandShown", seat, shown }     lay a hand flat and face up (it stays that seat's)
 // { type: "setMessy", pile, messy }         squared up (only the top shows) or loosely heaped
 // { type: "batch", actions: [...] }         several actions as one step (one undo)
 // { type: "split", pile, parts: [{ id, x, y, rot }] }  cut into parts.length stacks; parts[0]
@@ -198,6 +201,10 @@ const ACTIONS = {
       ACTIONS.moveCards(s, { cards: [id], to: { hand: seat } });
     }
   },
+  setHandShown(s, { seat, shown }) {
+    s.shownHands = { ...(s.shownHands ?? {}) };
+    if (shown) s.shownHands[seat] = true; else delete s.shownHands[seat];
+  },
   setMessy(s, { pile, messy }) { s.piles[pile].messy = !!messy; },
   batch(s, { actions }) { for (const a of actions) ACTIONS[a.type](s, a); },
   split(s, { pile, parts }) {
@@ -229,6 +236,7 @@ const ACTIONS = {
     const keep = new Set(seats.map((seat) => seat.id));
     for (const c of Object.values(s.cards)) if (c.privateTo && !keep.has(c.privateTo)) c.privateTo = null;
     s.seats = seats; s.hands = hands;
+    s.shownHands = Object.fromEntries(Object.entries(s.shownHands ?? {}).filter(([id]) => hands[id]));
     if (leftover.length) {
       for (const id of leftover) s.cards[id].faceUp = false;
       const id = `returned${s.nextZ}`;

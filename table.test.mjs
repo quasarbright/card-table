@@ -158,3 +158,16 @@ test("batch applies its actions in order; flipping a stack squares it up", () =>
   assert.equal(s.piles.deck.messy, false);
   checkConservation(s);
 });
+
+test("a shown hand is still its owner's, but everyone sees it and it lies flat", () => {
+  let s = apply(newTable(3), { type: "deal", pile: "deck", count: 2, seats: ["s0"] });
+  const id = s.hands.s0[0];
+  assert.equal(canSee(s, id, "s1"), false);
+  s = apply(s, { type: "setHandShown", seat: "s0", shown: true });
+  assert.equal(canSee(s, id, "s1"), true);
+  assert.equal(tiltedToward(s, id), null);
+  assert.equal(locate(s, id).hand, "s0");
+  s = apply(s, { type: "setHandShown", seat: "s0", shown: false });
+  assert.equal(canSee(s, id, "s1"), false);
+  assert.equal(tiltedToward(s, id), "s0");
+});

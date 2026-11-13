@@ -288,7 +288,7 @@ test("F while dragging flips what you carry", async ({ page }) => {
   await page.mouse.move(c.x + 40, c.y - 60, { steps: 4 });
   await page.keyboard.press("f");
   await page.waitForTimeout(150);
-  expect((await state(page)).cards[top].faceUp).toBe(true);
+  expect(await showsFace(page, top)).toBe(true);
   const to = await at(page, 330, 380);
   await page.mouse.move(to.x, to.y, { steps: 6 });
   await page.mouse.up();
@@ -362,21 +362,49 @@ test("undo and redo, from the button and the keyboard", async ({ page }) => {
   expect((await state(page)).piles.deck.cards).toHaveLength(52);
 });
 
-test("Show hand lays your hand face up on the table, and it's one undo", async ({ page }) => {
+test("Show hand lays your hand flat for everyone, and it stays your hand", async ({ page }) => {
   await open(page);
   await page.evaluate(() => window.cardTable.dispatch({ type: "deal", pile: "deck", count: 4, seats: ["s0"] }));
   await settle(page);
   const hand = (await state(page)).hands.s0;
-  await expect(page.locator(".ct-handbar")).toBeVisible();
-  await page.locator(".ct-handbar").getByRole("button", { name: "Show hand" }).click();
+  const bar = page.locator(".ct-handbar");
+  await expect(bar).toBeVisible();
+  await bar.getByRole("button", { name: "Show hand" }).click();
   await settle(page);
-  let s = await state(page);
-  expect(s.hands.s0).toEqual([]);
-  for (const id of hand) expect(s.cards[id].faceUp).toBe(true);
-  await expect(page.locator(".ct-handbar")).toBeHidden();
+  expect((await state(page)).hands.s0).toEqual(hand);
+  await page.click('#viewer [data-seat="s1"]');
+  await page.waitForTimeout(700);
+  for (const id of hand) expect(await showsFace(page, id)).toBe(true);
+  await page.click('#viewer [data-seat="s0"]');
+  await bar.getByRole("button", { name: "Hide hand" }).click();
+  await page.click('#viewer [data-seat="s1"]');
+  await page.waitForTimeout(700);
+  for (const id of hand) expect(await showsFace(page, id)).toBe(false);
+  await page.click('#viewer [data-seat="s0"]');
   await page.click("#undo");
-  s = await state(page);
-  expect(s.hands.s0).toEqual(hand);
+  expect((await state(page)).shownHands.s0).toBe(true);
+});
+
+test("carried over another hand a card is hidden until flipped for them; dropping gives it", async ({ page }) => {
+  await open(page);
+  await page.evaluate(() => window.cardTable.dispatch({ type: "deal", pile: "deck", count: 2, seats: ["s0"] }));
+  await settle(page);
+  const id = (await state(page)).hands.s0.at(-1);
+  await page.mouse.move(...Object.values(await center(page, cardSel(id))));
+  await page.mouse.down();
+  // over Player 2's hand (to your left)
+  const p2 = await page.evaluate(() => window.cardTable.view.toScreen(500 - 378, 500));
+  await page.mouse.move(p2.x, p2.y, { steps: 12 });
+  await page.waitForTimeout(300);
+  expect(await showsFace(page, id)).toBe(false);
+  await expect(page.locator(".ct-eye:not(.ct-eye-open)")).toHaveCount(1);
+  await page.keyboard.press("f");
+  await expect(page.locator(".ct-eye.ct-eye-them")).toHaveCount(1);
+  await page.keyboard.press("f");
+  await expect(page.locator(".ct-eye.ct-eye-them")).toHaveCount(0);
+  await page.mouse.up();
+  await settle(page);
+  expect((await state(page)).hands.s1).toEqual([id]);
 });
 
 test("a card carried out of your hand goes down face up, or face down if flipped on the way", async ({ page }) => {

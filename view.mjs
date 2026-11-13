@@ -22,7 +22,11 @@ function jitter(id, salt) {
 }
 
 // spacing between neighbors in a hand of k cards
-export function handGap(own, k) { return Math.min(own ? 30 : 20, (own ? 420 : 260) / Math.max(1, k - 1)); }
+export function handGap(own, k, shown = false) {
+  // a shown hand lies flat with every card readable; a held one overlaps
+  if (shown) return Math.min(own ? 46 : 38, (own ? 480 : 300) / Math.max(1, k - 1));
+  return Math.min(own ? 30 : 20, (own ? 420 : 260) / Math.max(1, k - 1));
+}
 
 export function createView(root, { viewer = "s0", interactive = true } = {}) {
   root.classList.add("ct-view");
@@ -118,7 +122,7 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
       });
     });
     st.seats.forEach((seat, si) => {
-      const own = seat.id === viewer;
+      const own = seat.id === viewer, shown = !!st.shownHands?.[seat.id];
       const list = st.hands[seat.id].filter((id) => !carried.has(id));
       const gapAt = o.target?.hand === seat.id ? o.target.slot : -1;
       // reordering your own hand: the carried card rides along the hand, a little raised, and
@@ -127,7 +131,7 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
       if (gapAt >= 0) list.splice(gapAt, 0, SLOT);
       list.forEach((id, i) => {
         // the cards either side of the gap step aside so it's wide enough to see
-        const q = handSlot(si, n, own, i, list.length, gapAt < 0 || reorder ? 0 : Math.sign(i - gapAt));
+        const q = handSlot(si, n, own, i, list.length, gapAt < 0 || reorder ? 0 : Math.sign(i - gapAt), shown);
         if (id === SLOT) {
           if (reorder) out.ride = { ...q, z: 10000 + si * 100 + i, angle: seatAngle(si, n) };
           else out.slot = { ...q, z: 10000 + si * 100 + i };
@@ -154,16 +158,17 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
   }
 
   // slot i of k in a seat's hand: a shallow arc, fanned a little, facing the seat
-  function handSlot(si, n, own, i, k, aside = 0) {
+  // (shown: laid flat in a straight row at table size instead)
+  function handSlot(si, n, own, i, k, aside = 0, shown = false) {
     const a = seatAngle(si, n);
-    const hc = handCenter(si, n, own ? OWN_HAND_R : HAND_R);
+    const hc = handCenter(si, n, (own ? OWN_HAND_R : HAND_R) - (shown ? 24 : 0));
     const t = i - (k - 1) / 2;
-    const along = t * handGap(own, k) + aside * (own ? 26 : 18);
-    const fan = t * Math.min(4, 40 / Math.max(1, k)) / DEG;
-    const arc = t * t * 0.35;
+    const along = t * handGap(own, k, shown) + aside * (own ? 26 : 18);
+    const fan = shown ? 0 : t * Math.min(4, 40 / Math.max(1, k)) / DEG;
+    const arc = shown ? 0 : t * t * 0.35;
     return {
       x: hc.x + Math.sin(a) * along + Math.cos(a) * arc, y: hc.y - Math.cos(a) * along + Math.sin(a) * arc,
-      rot: a - Math.PI / 2 + fan, scale: own ? OWN_HAND_SCALE : 1,
+      rot: a - Math.PI / 2 + fan, scale: own && !shown ? OWN_HAND_SCALE : 1,
     };
   }
 
@@ -277,7 +282,7 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
       }
       let look = canSee(st, id, viewer) ? "face" : "back";
       // a card carried out of your hand shows whichever side you'll put down
-      if (pl.carried && !pl.riding && o.drag?.faceUp != null) look = o.drag.faceUp ? "face" : "back";
+      if (pl.carried && o.drag?.faceUp != null) look = o.drag.faceUp ? "face" : "back";
       // a whole stack turning over turns as one block, about the stack's middle
       const whole = !o.instant && shown.has(id) && o.stackFlip?.cards.has(id);
       if (shown.get(id) !== look || whole) {
@@ -443,15 +448,19 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
     eyeLayer.replaceChildren();
     for (const [id, pl] of place) {
       const card = st.cards[id];
-      let open;
+      let open, to = null;
       if (pl.carried) {
         if (pl.riding) continue;
         open = o.drag?.faceUp != null ? o.drag.faceUp : card.faceUp;
+        // held over another player's hand: flipped, it's shown to just them
+        if (o.drag?.from?.hand && o.target?.hand && o.target.hand !== viewer) to = seatOf(st, o.target.hand)?.seat;
       } else if (!pl.hand && !card.faceUp && card.privateTo === viewer) open = false;
       else continue;
       const eye = el("div", "ct-eye", eyeLayer);
       eye.innerHTML = eyeSVG(open);
-      eye.title = open ? "Everyone can see this card" : "Only you can see this card";
+      eye.title = !open ? "Only you can see this card" : to ? `${to.name} can see this card` : "Everyone can see this card";
+      if (to && open) eye.style.setProperty("--eye", to.color);
+      eye.classList.toggle("ct-eye-them", !!(to && open));
       eye.dataset.card = id;
       eye.classList.toggle("ct-eye-open", open);
       const follow = () => {
