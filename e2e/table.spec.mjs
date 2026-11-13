@@ -563,12 +563,15 @@ test("a card carried over a spread stack goes into the gap it opens; on top, the
   const row = (await state(page)).piles.row.cards;
   const xOf = (id) => page.locator(cardSel(id)).boundingBox().then((b) => b.x);
   const firstX = await xOf(row[0]);
-  // carry the deck's top card over the gap between the 2nd and 3rd cards
+  // carry the deck's top card to where the 3rd card's middle is: it goes in there, 3rd
   const top = await topOf(page, "deck");
-  const third = await page.locator(cardSel(row[2])).boundingBox();
+  const third = await page.evaluate(() => {
+    const t = window.cardTable, row = t.state.piles.row, along = 2 * 22;
+    return t.view.toScreen(row.x + Math.cos(row.rot) * along, row.y + Math.sin(row.rot) * along);
+  });
   await page.mouse.move(...Object.values(await center(page, cardSel(top))));
   await page.mouse.down();
-  await page.mouse.move(third.x + 4, third.y + third.height / 2, { steps: 12 });
+  await page.mouse.move(third.x, third.y, { steps: 12 });
   await page.waitForTimeout(400);
   await expect(page.locator(".ct-slot.ct-on")).toHaveCount(0); // it rides in the gap instead
   await page.waitForTimeout(80);
@@ -607,10 +610,10 @@ test("a whole stack carried over a spread stack opens a gap its size and goes in
   const g = await center(page, '.ct-grip[data-pile="three"]');
   await page.mouse.move(g.x, g.y);
   await page.mouse.down();
-  // the pointer over the row where the stack's middle should go: its first card then lands 10
-  // along from the row's first card, the gap after the 2nd
+  // the pointer over the row where the stack's middle should go: the 4th place (its first card
+  // in the 3rd), with the row 22 apart
   const aim = await page.evaluate(() => {
-    const t = window.cardTable, row = t.state.piles.row, along = 10 + 22; // + half of three cards
+    const t = window.cardTable, row = t.state.piles.row, along = 3 * 22;
     return t.view.toScreen(row.x + Math.cos(row.rot) * along, row.y + Math.sin(row.rot) * along);
   });
   await page.mouse.move(aim.x, aim.y, { steps: 14 });
