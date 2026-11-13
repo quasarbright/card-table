@@ -7,7 +7,7 @@
 // with the same table.
 //
 // state = {
-//   seats: [{ id, name, color }],                 // in order around the table
+//   seats: [{ id, name, color, player }],         // in order around the table; player: who sits there
 //   cards: { [id]: { id, rank, suit, faceUp, privateTo } },
 //   piles: { [id]: { id, x, y, rot, z, messy, cards: [bottom … top] } },  // messy: top few show
 //   hands: { [seatId]: [cardId, …] },             // left to right, as the owner sees them
@@ -36,7 +36,7 @@ export function handCenter(i, n, r = FELT_R - 70) {
 }
 
 export function makeSeats(n) {
-  return Array.from({ length: n }, (_, i) => ({ id: `s${i}`, name: `Player ${i + 1}`, color: SEAT_COLORS[i] }));
+  return Array.from({ length: n }, (_, i) => ({ id: `s${i}`, name: `Player ${i + 1}`, color: SEAT_COLORS[i], player: null }));
 }
 
 export function deckCards() {
@@ -108,6 +108,7 @@ export function tiltedToward(state, cardId) {
 // { type: "setPrivate", cards: [ids], seat } seat = null makes them hidden from everyone again
 // { type: "shuffle", pile, order }           order: the pile's cards, bottom → top
 // { type: "deal", pile, count, seats }       count cards to each seat's hand, one at a time
+// { type: "sit", seat, player, name }        a player takes a seat (and leaves any other)
 // { type: "setHandShown", seat, shown }     lay a hand flat and face up (it stays that seat's)
 // { type: "setMessy", pile, messy }         squared up (only the top shows) or loosely heaped
 // { type: "batch", actions: [...] }         several actions as one step (one undo)
@@ -201,6 +202,12 @@ const ACTIONS = {
       ACTIONS.moveCards(s, { cards: [id], to: { hand: seat } });
     }
   },
+  sit(s, { seat, player, name }) {
+    for (const x of s.seats) if (x.player === player) x.player = null;
+    const x = s.seats.find((q) => q.id === seat);
+    if (!x) throw new Error(`no seat ${seat}`);
+    x.player = player; x.name = name;
+  },
   setHandShown(s, { seat, shown }) {
     s.shownHands = { ...(s.shownHands ?? {}) };
     if (shown) s.shownHands[seat] = true; else delete s.shownHands[seat];
@@ -229,8 +236,10 @@ const ACTIONS = {
   setSeats(s, { n }) {
     n = Math.max(2, Math.min(MAX_SEATS, n));
     const seats = makeSeats(n);
-    // keep names of seats that stay
-    for (let i = 0; i < Math.min(n, s.seats.length); i++) seats[i].name = s.seats[i].name;
+    // seats that stay keep their names and players
+    for (let i = 0; i < Math.min(n, s.seats.length); i++) {
+      seats[i].name = s.seats[i].name; seats[i].player = s.seats[i].player ?? null;
+    }
     const leftover = s.seats.slice(n).flatMap((seat) => s.hands[seat.id]);
     const hands = Object.fromEntries(seats.map((seat) => [seat.id, s.hands[seat.id] ?? []]));
     const keep = new Set(seats.map((seat) => seat.id));

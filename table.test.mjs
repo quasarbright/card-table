@@ -171,3 +171,14 @@ test("a shown hand is still its owner's, but everyone sees it and it lies flat",
   assert.equal(canSee(s, id, "s1"), false);
   assert.equal(tiltedToward(s, id), "s0");
 });
+
+test("sit puts a player in one seat; fewer seats keep the players that stay", () => {
+  let s = apply(newTable(3), { type: "sit", seat: "s1", player: "abc", name: "Ann" });
+  s = apply(s, { type: "sit", seat: "s2", player: "abc", name: "Ann" });
+  assert.deepEqual(s.seats.map((x) => x.player), [null, null, "abc"]);
+  s = apply(s, { type: "sit", seat: "s0", player: "me", name: "Mo" });
+  s = apply(s, { type: "setSeats", n: 4 });
+  assert.equal(s.seats[0].name, "Mo");
+  assert.equal(s.seats[2].player, "abc");
+  assert.equal(s.seats[3].player, null);
+});

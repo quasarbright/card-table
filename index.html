@@ -7,6 +7,8 @@
 
   <link rel="stylesheet" href="https://quasarbright.github.io/sketches/shared/cohesion.css" />
   <script type="module" src="https://quasarbright.github.io/sketches/shared/cohesion.js"></script>
+  <!-- QR codes for the invite link -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
 
   <!-- identity: a card table. Green felt, a walnut rail, ivory cards with red lattice backs.
        Young Serif for the title, card indices and every number; Instrument Sans for the UI.
@@ -109,6 +111,8 @@
     }
     .ct-plate::before { content: ""; display: inline-block; width: .6em; height: .6em; border-radius: 50%; background: var(--seat); margin-right: .45em; vertical-align: .05em; }
     .ct-plate.ct-me { border-color: var(--seat); }
+    .ct-plate.ct-open { color: var(--muted); border-style: dashed; }
+    .ct-plate.ct-away { opacity: .5; }
 
     .ct-grip {
       transform-origin: 0 0;
@@ -244,6 +248,54 @@
       background: var(--ivory); color: #1d1c22; box-shadow: 0 4px 12px rgba(0,0,0,.4); pointer-events: none;
     }
 
+    .ct-bar-btn.ct-bar-share { background: var(--ivory); color: #1d1c22; font-weight: 600; }
+    .ct-bar-btn.ct-bar-share:hover { background: #fff; }
+    .ct-bar [hidden] { display: none !important; }
+
+    /* ---- invite: the link and its QR code, on the menu's ivory card ---- */
+    .ct-share .ct-pop { width: 270px; }
+    .ct-share-title { font: 1.15rem var(--font-display); margin-bottom: 4px; }
+    .ct-share-row { display: flex; gap: 6px; margin: 12px 0 10px; }
+    .ct-share-url {
+      flex: 1; min-width: 0; font: .78rem var(--font-ui); color: #1d1c22; background: rgba(29,28,34,.06);
+      border: 1px solid rgba(29,28,34,.25); border-radius: 6px; padding: 6px 8px;
+    }
+    .ct-share-row .ct-act { white-space: nowrap; }
+    .ct-qr { display: grid; place-items: center; padding: 6px; margin-bottom: 8px; }
+    .ct-qr svg { width: 176px; height: 176px; display: block; }
+    .ct-share .ct-pop > .ct-act { width: 100%; }
+
+    /* ---- the opening screen: host, or put your name in to join ---- */
+    .ct-gate {
+      position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; padding: 16px;
+      background: rgba(6,12,9,.62); backdrop-filter: blur(3px);
+    }
+    .ct-gate-card {
+      --ink: #1d1c22; --red: #a8322f;
+      width: min(380px, 100%); box-sizing: border-box; padding: 26px 26px 20px; border-radius: 12px;
+      background: var(--ivory); color: var(--ink);
+      box-shadow: inset 0 0 0 4px var(--ivory), inset 0 0 0 5px rgba(168,50,47,.35), 0 24px 60px rgba(0,0,0,.6);
+      animation: ct-menu-in .18s cubic-bezier(.2,.8,.2,1);
+    }
+    .ct-gate-card h1 { font: 1.75rem var(--font-display); margin: 0 0 10px; }
+    .ct-gate-card p { margin: 0 0 18px; line-height: 1.5; color: rgba(29,28,34,.8); }
+    .ct-gate-card .ct-act { font: 600 1rem var(--font-ui); color: inherit; width: 100%; padding: 11px 14px; cursor: pointer; margin-bottom: 8px; }
+    .ct-gate-card .ct-act-ink { color: var(--ivory); }
+    .ct-gate-card .ct-act:disabled { opacity: .45; cursor: default; }
+    .ct-gate-note { font-size: .85rem; margin: 10px 0 0 !important; color: rgba(29,28,34,.62) !important; }
+    .ct-gate-form label { display: block; font-size: .85rem; color: rgba(29,28,34,.7); margin-bottom: 6px; }
+    .ct-gate-form input {
+      width: 100%; box-sizing: border-box; font: 1.05rem var(--font-ui); color: var(--ink); margin-bottom: 14px;
+      padding: 10px 12px; border-radius: 7px; border: 1.5px solid rgba(29,28,34,.35); background: #fbf8f1;
+    }
+    .ct-gate-form input:focus { outline: none; border-color: var(--red); box-shadow: 0 0 0 3px rgba(168,50,47,.15); }
+    .ct-gate-back { font: inherit; background: none; border: 0; padding: 0; color: var(--red); text-decoration: underline; cursor: pointer; }
+    .ct-dots { display: flex; gap: 6px; justify-content: center; padding: 4px 0 8px; }
+    .ct-dots i { width: 8px; height: 8px; border-radius: 50%; background: var(--red); animation: ct-dot 1s infinite ease-in-out; }
+    .ct-dots i:nth-child(2) { animation-delay: .15s; } .ct-dots i:nth-child(3) { animation-delay: .3s; }
+    @keyframes ct-dot { 40% { transform: translateY(-6px); opacity: .5; } }
+    @media (prefers-reduced-motion: reduce) { .ct-dots i { animation: none; } }
+
     /* ---- about modal ---- */
     .ct-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 14px 0 4px; }
     .ct-pair figure { margin: 0; }
@@ -273,6 +325,7 @@
 
   <div class="control-bar ct-bar">
     <button class="ct-bar-btn" id="undo" disabled title="Take back the last change (⌘Z or Ctrl+Z; add Shift to redo)"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>Undo</button>
+    <button class="ct-bar-btn ct-bar-share" id="share" hidden title="Get the link that lets other people sit down at this table">Invite</button>
     <button class="ct-bar-btn" id="gather" title="Collect every card, from the table and all hands, into one face-down deck in the middle">Gather cards</button>
     <div class="ct-group" title="How many seats are at the table. Cards in a removed seat's hand go back to the middle.">
       <span class="ct-label">Players</span>
@@ -301,7 +354,9 @@
       <p>Both pictures are drawn from the same table by the same code the main page uses, once per seat. You can try it yourself: pick another seat under <b>View as</b> at the bottom of the page.</p>
 
       <div class="section-label">Sharing a table</div>
-      <p>Every change to the table is a small message: move these cards there, flip this one, shuffle that stack into this order. Applying the same messages in the same order always gives the same table. A shuffle picks its new order before the message is sent, so the message carries the result rather than the dice roll. That's what will let several players share one table later: each browser applies everyone's messages and they all end up in the same place.</p>
+      <p>Every change to the table is a small message: move these cards there, flip this one, shuffle that stack into this order. Applying the same messages in the same order always gives the same table. A shuffle picks its new order before the message is sent, so the message carries the result rather than the dice roll.</p>
+      <p>So the host's browser keeps the real table. Everyone sends their changes to it, it applies them one after another, and it passes each one on to everybody. You see your own change straight away, without waiting for the host, and it's quietly replaced by the host's copy when that arrives.</p>
+      <p>Moves in progress don't go through the host. While you drag, your browser sends where your cards are straight to everyone else's about thirty times a second, and their tables ease the cards toward each new spot. The browsers find each other through public relays, then talk directly, so there's no server of mine in between.</p>
     </about-modal>
   </div>
 

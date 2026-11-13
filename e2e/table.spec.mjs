@@ -7,13 +7,20 @@ async function open(page) {
   page.on("pageerror", (e) => errors.push(e.message));
   page.on("console", (m) => { if (m.type() === "error" && !/net::ERR_FAILED/.test(m.text())) errors.push(m.text()); });
   await page.route((url) => url.hostname !== "localhost", serveFromCache);
-  await page.goto("/index.html");
-  await page.waitForFunction(() => !!window.cardTable);
+  await host(page);
   await page.evaluate(() => window.cardTable.reset(4));
   await settle(page);
   return errors;
 }
 // long enough for the cards' springs to come to rest
+// host a table through the opening screen (tabs talk over a BroadcastChannel: ?net=local)
+async function host(page, name = "Mike") {
+  await page.goto("/index.html?net=local");
+  await page.getByRole("button", { name: "Host a table" }).click();
+  await page.fill("#ct-name", name);
+  await page.getByRole("button", { name: "Host table" }).click();
+  await page.waitForFunction(() => !!window.cardTable?.session);
+}
 const settle = (page) => page.waitForTimeout(650);
 const state = (page) => page.evaluate(() => window.cardTable.state);
 const topOf = async (page, pile) => (await state(page)).piles[pile].cards.at(-1);
@@ -207,7 +214,9 @@ test("the table survives a reload; gather brings everything back", async ({ page
   await open(page);
   await page.evaluate(() => window.cardTable.deal("deck", 3));
   await page.reload();
-  await page.waitForFunction(() => !!window.cardTable);
+  // the host's table resumes without the opening screen
+  await page.waitForFunction(() => !!window.cardTable?.session);
+  await expect(page.locator(".ct-gate")).toHaveCount(0);
   expect((await state(page)).hands.s1.length).toBe(3);
   await page.click("#gather");
   const s = await state(page);
@@ -350,7 +359,7 @@ test("the card under the pointer lifts", async ({ page }) => {
   expect(lifted).toBeLessThan(-5);
 });
 
-test("undo and redo, from the button and the keyboard", async ({ page }) => {
+test("undo, from the button and the keyboard", async ({ page }) => {
   await open(page);
   await expect(page.locator("#undo")).toBeDisabled();
   const top = await topOf(page, "deck");
@@ -359,8 +368,8 @@ test("undo and redo, from the button and the keyboard", async ({ page }) => {
   await page.click("#undo");
   await settle(page);
   expect((await state(page)).piles.deck.cards).toHaveLength(52);
-  await page.keyboard.press("ControlOrMeta+Shift+Z");
-  expect((await state(page)).piles.deck.cards).toHaveLength(51);
+  await expect(page.locator("#undo")).toBeDisabled();
+  await dragTo(page, await center(page, cardSel(top)), await at(page, 330, 380));
   await page.keyboard.press("ControlOrMeta+Z");
   expect((await state(page)).piles.deck.cards).toHaveLength(52);
 });

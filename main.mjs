@@ -1,16 +1,33 @@
-// The page: one table, played by hand. Pointer and keyboard input turn into table actions
-// (see table.mjs), which are applied and drawn. Everything here is local for now; the
-// actions are already the messages a shared table would send.
+// The page: one shared table, played by hand. Pointer and keyboard input turn into table
+// actions (see table.mjs). A session (sync.mjs) applies them and keeps every player's table the
+// same; while you drag, where your cards are is streamed to everyone else as it happens.
 import { newTable, apply, shuffledOrder, locate, handCenter, seatAngle, MAX_SEATS, RANKS, SUITS, CARD_W, CARD_H, TABLE_R, FELT_R } from "./table.mjs";
 import { createView, HAND_R, OWN_HAND_R, GRIP_REACH, handGap, handReach } from "./view.mjs";
 import { suitDefs } from "./faces.mjs";
 import { startAboutDiagram } from "./about.mjs";
+import { connect } from "./net.mjs";
+import { hostSession, clientSession } from "./sync.mjs";
+import { openGate, closeGate } from "./gate.mjs";
+import { openShare, closeShare } from "./share.mjs";
 
 document.body.insertAdjacentHTML("afterbegin", suitDefs());
 
-const SAVE_KEY = "card-table:state";
-let state = load() ?? newTable(4);
-let me = state.seats[0].id;
+// ?net=local talks between tabs of this browser instead of over the internet (for tests); each
+// tab is then its own player, so it keeps its identity per tab
+const params = new URLSearchParams(location.search);
+const NET = params.get("net") === "local" ? "local" : "trystero";
+const store = NET === "local" ? sessionStorage : localStorage;
+const read = (k) => { try { return store.getItem(`card-table:${k}`); } catch { return null; } };
+const write = (k, v) => { try { store.setItem(`card-table:${k}`, v); } catch {} };
+
+// this browser's player id, kept so a reload sits you back in your seat
+let player = read("player");
+if (!player) { player = Math.random().toString(36).slice(2, 12); write("player", player); }
+
+let session = null;           // hostSession or clientSession, once you've hosted or joined
+let state = newTable(4);      // the table being drawn (a blank one behind the opening screen)
+let me = state.seats[0].id;   // the seat you see the table from
+let online = [];              // players connected right now
 const view = createView(document.getElementById("table"), { viewer: me });
 
 let drag = null;      // what's being carried
@@ -18,50 +35,37 @@ let pending = null;   // a press that hasn't become a drag yet
 let hovered = null;   // { card } or { pile }: what keyboard shortcuts act on, and what lifts
 let menu = null;
 
-// ---- state ---------------------------------------------------------------------------------
+// ---- the session ---------------------------------------------------------------------------
 
-function load() {
-  try {
-    const s = JSON.parse(localStorage.getItem(SAVE_KEY));
-    return s && s.cards && s.piles && s.hands && s.seats ? s : null;
-  } catch { return null; }
-}
-function save() { try { localStorage.setItem(SAVE_KEY, JSON.stringify(state)); } catch {} }
+// fx: how to animate a change ({ delays: { card: ms }, stackFlip: { cards, x, y } }); it travels
+// with the action so everyone sees the same deal and the same stack turning over
+function dispatch(action, fx = null) { session?.dispatch(action, fx); }
 
-// every change can be taken back: the states before each one, newest last
-const past = [], future = [];
-const HISTORY = 300;
-function dispatch(action, renderOpts = {}) {
-  past.push(state);
-  if (past.length > HISTORY) past.shift();
-  future.length = 0;
-  state = apply(state, action);
-  commit(renderOpts);
+function onChange(next, fx, by) {
+  state = next;
+  if (by) remote.delete(by); // their drop has landed
+  if (!state.seats.some((s) => s.id === me)) me = session?.seat ?? state.seats[0].id;
+  view.viewer = me;
+  draw(fx ?? {});
+  refreshBar();
 }
-function commit(renderOpts = {}) {
-  save();
-  draw(renderOpts);
-  undoEl.disabled = !past.length;
-  if (!state.seats.some((s) => s.id === me)) setViewer(state.seats[0].id);
-  else fillSelects();
-}
-function undo() {
-  if (!past.length || drag) return;
-  future.push(state); state = past.pop(); closeMenu(); commit();
-}
-function redo() {
-  if (!future.length || drag) return;
-  past.push(state); state = future.pop(); closeMenu(); commit();
-}
+function undo() { if (!drag) { closeMenu(); session?.undo(); } }
 
 function draw(o = {}) {
   placeHandBar();
+  const now = performance.now();
+  const others = [...remote.values()].filter((r) => now - r.at < 4000).map((r) => r.d);
   view.render(state, {
     ...o,
     hover: drag || pending ? null : hovered?.card,
     drag: drag && drag.active ? drag : null,
     target: drag?.target,
-    presence: drag?.active ? [{ seat: me, cards: drag.cards ?? state.piles[drag.pile]?.cards ?? [] }] : [],
+    remote: others,
+    online: new Set(online),
+    presence: [
+      ...(drag?.active ? [{ seat: me, cards: drag.cards ?? state.piles[drag.pile]?.cards ?? [] }] : []),
+      ...others.map((d) => ({ seat: d.seat, cards: d.cards ?? state.piles[d.pile]?.cards ?? [] })),
+    ],
   });
 }
 
@@ -73,16 +77,119 @@ function relayout() {
   requestAnimationFrame(() => view.stage.classList.remove("ct-still"));
 }
 
+// ---- other players' drags, as they happen --------------------------------------------------
+
+const remote = new Map(); // seat → { d: their drag, at: when it last moved }
+function onRemoteDrag(d) {
+  if (!d?.seat || d.seat === session?.seat) return;
+  if (d.end) {
+    // their drop is on its way; hold the card where it is a moment so it doesn't flick back
+    const r = remote.get(d.seat);
+    if (r) setTimeout(() => { if (remote.get(d.seat) === r) { remote.delete(d.seat); draw(); } }, 400);
+    return;
+  }
+  remote.set(d.seat, { d, at: performance.now() });
+  draw();
+}
+// yours, at most ~30 times a second, and always the last position
+let lastSent = 0, sendTimer = 0;
+function sendDrag() {
+  if (!session || online.length < 2) return;
+  const now = performance.now();
+  clearTimeout(sendTimer);
+  if (now - lastSent < 33) { sendTimer = setTimeout(sendDrag, 33 - (now - lastSent)); return; }
+  lastSent = now;
+  if (!drag?.active) { netRef?.send("drag", { seat: session.seat, end: true }); return; }
+  const t = drag.target;
+  netRef?.send("drag", {
+    seat: session.seat, cards: drag.cards ?? null, pile: drag.pile ?? null, whole: !!drag.whole,
+    x: drag.x, y: drag.y, rot: drag.rot, faceUp: drag.faceUp ?? null, inHand: !!drag.inHand,
+    from: drag.from?.hand ? { hand: drag.from.hand } : null,
+    target: t ? { hand: t.hand ?? null, slot: t.slot ?? null, pile: t.pile ?? null } : null,
+  });
+}
+
+// ---- hosting and joining ---------------------------------------------------------------------
+
+let netRef = null;
+const newTableId = () => Math.random().toString(36).slice(2, 10);
+function tableUrl(id) {
+  const u = new URL(location.href);
+  u.search = ""; u.hash = "";
+  u.searchParams.set("t", id);
+  if (NET === "local") u.searchParams.set("net", "local");
+  return u.toString();
+}
+
+function hostSave(id) { return (st) => write(`host:${id}`, JSON.stringify(st)); }
+function hostSaved(id) { try { return JSON.parse(read(`host:${id}`)); } catch { return null; } }
+
+function startHost(id, name) {
+  history.replaceState(null, "", tableUrl(id));
+  let st = hostSaved(id);
+  if (!st?.seats?.some((s) => s.player === player)) {
+    st = st ?? newTable(4);
+    st = apply(st, { type: "sit", seat: st.seats.find((s) => !s.player)?.id ?? st.seats[0].id, player, name });
+  }
+  const net = connect(id, NET);
+  netRef = net;
+  online = [player];
+  session = hostSession(net, st, { player, name }, {
+    onChange, save: hostSave(id), onRoster(list) { online = list; refreshBar(); draw(); },
+  });
+  net.on("drag", onRemoteDrag);
+  net.start();
+  hostSave(id)(st);
+  state = st; me = session.seat; view.viewer = me;
+  closeGate();
+  relayout(); refreshBar();
+}
+
+function startJoin(id, name) {
+  const net = connect(id, NET);
+  netRef = net;
+  openGate({ step: "connecting" });
+  const giveUp = setTimeout(() => {
+    if (!session?.connected) openGate({ step: "unreachable", retry: () => location.reload() });
+  }, 25000);
+  session = clientSession(net, { player, name }, {
+    onChange,
+    onWelcome(seat) {
+      clearTimeout(giveUp);
+      if (!seat) { openGate({ step: "full", host: hostOwn }); return; }
+      write(`joined:${id}`, "1");
+      me = seat; view.viewer = me;
+      closeGate();
+      relayout();
+    },
+    onRoster(list) { online = list; refreshBar(); draw(); },
+    onLost() { remote.clear(); openGate({ step: "lost", host: hostOwn }); },
+  });
+  net.on("drag", onRemoteDrag);
+  net.start();
+}
+const hostOwn = () => { location.href = tableUrl("").replace(/[?&]t=[^&]*/, "").replace(/\?$/, ""); };
+
 // ---- the bottom bar ------------------------------------------------------------------------
 
 const undoEl = document.getElementById("undo");
 undoEl.addEventListener("click", undo);
 const playersEl = document.getElementById("players");
 const viewerEl = document.getElementById("viewer");
-function fillSelects() {
+// the host sets how many seats there are; while the host is alone they can sit in any seat to
+// check what each player sees
+function refreshBar() {
+  const host = !!session?.isHost, alone = online.length < 2;
+  undoEl.disabled = !session?.canUndo();
+  playersEl.closest(".ct-group").hidden = !host;
+  viewerEl.closest(".ct-group").hidden = !(host && alone);
+  document.getElementById("gather").hidden = !session;
+  document.getElementById("share").hidden = !session;
+  if (host && !alone && me !== session.seat) { me = session.seat; view.viewer = me; draw(); }
+  const taken = state.seats.reduce((m, s, i) => (s.player ? i + 1 : m), 2);
   playersEl.innerHTML = Array.from({ length: MAX_SEATS - 1 }, (_, i) => {
     const n = i + 2;
-    return `<button role="radio" aria-checked="${n === state.seats.length}" data-n="${n}">${n}</button>`;
+    return `<button role="radio" aria-checked="${n === state.seats.length}" data-n="${n}"${n < taken ? " disabled" : ""}>${n}</button>`;
   }).join("");
   viewerEl.innerHTML = state.seats.map((s) =>
     `<button role="radio" aria-checked="${s.id === me}" data-seat="${s.id}" style="--seat:${s.color}" aria-label="${s.name}" data-tip="${s.name}"></button>`).join("");
@@ -98,18 +205,20 @@ viewerEl.addEventListener("click", (e) => {
 });
 function setViewer(id) {
   me = id; view.viewer = id;
-  fillSelects();
+  refreshBar();
   closeMenu();
   draw();
 }
 document.getElementById("gather").addEventListener("click", () => {
   dispatch({ type: "gather", id: newId(), x: 500, y: 500, rot: view.uprightRot() });
 });
+document.getElementById("share").addEventListener("click", (e) => openShare(e.currentTarget));
 
 // ---- helpers -------------------------------------------------------------------------------
 
 let idCounter = 0;
-function newId() { return `p${Date.now().toString(36)}${(idCounter++).toString(36)}`; }
+// pile ids are made by whoever makes the pile, so they carry the player's id to stay unique
+function newId() { return `p${player.slice(0, 4)}${Date.now().toString(36)}${(idCounter++).toString(36)}`; }
 
 // what a press on this element means: a card (the top one, for a stack) or a whole pile
 function targetOf(elem) {
@@ -209,6 +318,7 @@ tableEl.addEventListener("pointerdown", (e) => {
       pending = null;
       startDrag({ pile: t.pile, whole: true, pointerId: mine.pointerId }, view.toTable(mine.sx, mine.sy));
       draw();
+      sendDrag();
     }, HOLD_MS);
   }
 });
@@ -233,6 +343,7 @@ tableEl.addEventListener("pointermove", (e) => {
     // over someone else's hand a card shows its back; flip it there to show it to just them
     if (drag.from?.hand && drag.target?.hand && drag.target.hand !== me && drag.target.hand !== was) drag.faceUp = false;
     draw();
+    sendDrag();
   }
 });
 
@@ -254,7 +365,7 @@ function startDrag(t, at) {
 
 function flipCarried() {
   if (!drag) return;
-  if (drag.faceUp != null) { drag.faceUp = !drag.faceUp; draw(); return; }
+  if (drag.faceUp != null) { drag.faceUp = !drag.faceUp; draw(); sendDrag(); return; }
   if (drag.whole) flipStack(drag.pile, { x: drag.x, y: drag.y });
   else dispatch({ type: "flip", cards: drag.cards });
 }
@@ -270,6 +381,7 @@ tableEl.addEventListener("pointerup", (e) => {
   }
   if (!drag) return;
   const d = drag; drag = null;
+  sendDrag();
   const to = d.target;
   if (d.whole) {
     const cards = state.piles[d.pile].cards;
@@ -292,7 +404,7 @@ tableEl.addEventListener("pointerup", (e) => {
 });
 tableEl.addEventListener("pointercancel", (e) => {
   if (drag && e.pointerId !== drag.pointerId) return;
-  clearTimeout(pending?.timer); pending = null; drag = null; draw();
+  clearTimeout(pending?.timer); pending = null; drag = null; draw(); sendDrag();
 });
 tableEl.addEventListener("pointerleave", () => { if (!drag) setHover(null); });
 // the card under the pointer lifts a little; redraw only when that changes
@@ -317,7 +429,7 @@ function flipTarget(t) {
 }
 function flipStack(pileId, at = state.piles[pileId]) {
   const p = state.piles[pileId];
-  dispatch({ type: "flipPile", pile: pileId }, { stackFlip: { cards: new Set(p.cards), x: at.x, y: at.y } });
+  dispatch({ type: "flipPile", pile: pileId }, { stackFlip: { cards: [...p.cards], x: at.x, y: at.y } });
 }
 function toggleLook(t) {
   const c = state.cards[t.card];
@@ -336,7 +448,7 @@ function deal(pileId, count) {
   const n = state.seats.length, mi = state.seats.findIndex((s) => s.id === me);
   const seats = Array.from({ length: n }, (_, k) => state.seats[(mi + 1 + k) % n].id);
   const order = [...state.piles[pileId].cards].reverse().slice(0, count * n);
-  const delays = new Map(order.map((id, k) => [id, k * 70]));
+  const delays = Object.fromEntries(order.map((id, k) => [id, k * 70]));
   dispatch({ type: "deal", pile: pileId, count, seats }, { delays });
 }
 // lay a hand flat and face up for everyone, or pick it back up; the cards stay in the hand
@@ -524,13 +636,12 @@ function placeHandBar() {
 // ---- keyboard: acts on the card or stack under the pointer --------------------------------
 
 addEventListener("keydown", (e) => {
-  if (e.key === "Escape") { closeMenu(); return; }
+  if (e.key === "Escape") { closeMenu(); closeShare(); return; }
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z" && !e.target.closest?.("input, textarea")) {
     e.preventDefault();
-    if (e.shiftKey) redo(); else undo();
+    if (!e.shiftKey) undo();
     return;
   }
-  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "y") { e.preventDefault(); redo(); return; }
   if (e.metaKey || e.ctrlKey || e.altKey) return;
   if (e.target.closest?.("input, select, textarea")) return;
   if (drag) {
@@ -560,14 +671,31 @@ if (matchMedia("(pointer: coarse)").matches) {
   document.getElementById("hint").textContent =
     "Drag a card to move it, or press and hold a stack to move all of it. Tap for everything else.";
 }
-fillSelects();
 addEventListener("resize", relayout);
 relayout();
+refreshBar();
 startAboutDiagram();
+
+// Where to begin: a table link (?t=…) joins that table, or resumes it if you're its host or have
+// been at it before; otherwise the opening screen offers to host one.
+{
+  const id = params.get("t");
+  const name = read("name") ?? "";
+  const remember = (n) => write("name", n);
+  if (id && hostSaved(id) && name) startHost(id, name);
+  else if (id && read(`joined:${id}`) && name) startJoin(id, name);
+  else if (id) openGate({ step: "name", joining: true, name, done: (n) => { remember(n); startJoin(id, n); } });
+  else openGate({ step: "start", name, done: (n) => { remember(n); startHost(newTableId(), n); } });
+}
 
 // test hook (e2e/*.spec.mjs)
 window.cardTable = {
-  get state() { return state; }, get me() { return me; }, view, dispatch, setViewer, deal, shufflePile, split, undo, redo, toggleShown,
-  reset(n = 4) { state = newTable(n); past.length = future.length = 0; save(); setViewer(state.seats[0].id); undoEl.disabled = true; },
+  get state() { return state; }, get me() { return me; }, get session() { return session; }, get online() { return online; },
+  view, dispatch, setViewer, deal, shufflePile, split, undo, toggleShown,
+  // host only: a fresh table with n seats, you in the first, no history
+  reset(n = 4) {
+    const st = apply(newTable(n), { type: "sit", seat: "s0", player, name: read("name") ?? "You" });
+    session.replace(st);
+  },
   cardSize: [CARD_W, CARD_H],
 };
