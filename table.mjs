@@ -113,6 +113,7 @@ export function tiltedToward(state, cardId) {
 // { type: "deal", pile, count, seats }       count cards to each seat's hand, one at a time
 // { type: "sit", seat, player, name, color? } a player takes a seat (and leaves any other),
 //                                            in that color unless another player has it
+// { type: "stand", seat }                    the seat's player gets up (the seat and its hand stay)
 // { type: "setPlayer", seat, name?, color? } rename or recolor a seat; a color no player has
 //                                            (an empty seat holding it swaps with you)
 // { type: "setHandShown", seat, shown }     lay a hand flat and face up (it stays that seat's)
@@ -226,6 +227,11 @@ const ACTIONS = {
     if (!x) throw new Error(`no seat ${seat}`);
     x.player = player; x.name = name;
     if (color && SEAT_COLORS.includes(color) && !s.seats.some((q) => q !== x && q.player && q.color === color)) recolor(s, x, color);
+  },
+  stand(s, { seat }) {
+    const x = s.seats.find((q) => q.id === seat);
+    if (!x) throw new Error(`no seat ${seat}`);
+    x.player = null;
   },
   setPlayer(s, { seat, name, color }) {
     const x = s.seats.find((q) => q.id === seat);

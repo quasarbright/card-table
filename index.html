@@ -273,6 +273,27 @@
     .ct-swatch:disabled { opacity: .28; cursor: not-allowed; }
     .ct-swatch:focus-visible { outline: 2px solid #a8322f; outline-offset: 3px; }
 
+    /* spectators: a row of names at the top of the screen; the host clicks one for options */
+    .ct-watchers {
+      position: fixed; top: 14px; right: 16px; z-index: 6; display: flex; flex-wrap: wrap; gap: 6px;
+      align-items: center; justify-content: flex-end; max-width: min(520px, 60vw); font: .85rem var(--font-ui);
+    }
+    .ct-watchers[hidden] { display: none; }
+    .ct-watch-label { color: var(--muted); margin-right: 2px; }
+    .ct-watch-note { flex-basis: 100%; text-align: right; color: var(--text); margin-bottom: 2px; }
+    .ct-chip {
+      font: inherit; color: var(--text); background: rgba(20,12,7,.55); cursor: pointer;
+      border: 1px solid color-mix(in srgb, var(--seat) 55%, transparent); border-radius: 999px; padding: 3px 10px 3px 8px;
+    }
+    .ct-chip::before { content: ""; display: inline-block; width: .55em; height: .55em; border-radius: 50%; background: var(--seat); margin-right: .45em; }
+    .ct-chip:disabled { cursor: default; opacity: 1; }
+    .ct-chip:not(:disabled):hover { border-color: var(--seat); }
+    .ct-plate[data-seat] { cursor: default; }
+    .ct-person-name { font: 1.05rem var(--font-display); padding: 6px 12px 4px; }
+    .ct-menu .ct-item:disabled { opacity: .45; cursor: default; }
+    .ct-menu .ct-danger { color: #a8322f; }
+    @media (max-width: 600px) { .ct-watchers { top: auto; bottom: 150px; right: 12px; left: 12px; max-width: none; } }
+
     /* the pencil on your name plate, and what it opens */
     .ct-plate-edit {
       display: inline-grid; place-items: center; vertical-align: -.2em; margin: 0 -.35em 0 .4em;

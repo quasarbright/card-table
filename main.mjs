@@ -28,6 +28,10 @@ let session = null;           // hostSession or clientSession, once you've hoste
 let state = newTable(1);      // the table being drawn (a blank one behind the opening screen)
 let me = state.seats[0].id;   // the seat you see the table from
 let online = [];              // players connected right now
+let watchers = [];            // the ones of them watching, without a seat: [{ player, name, color }]
+const WATCH = "watching";     // the view a spectator gets: no seat, no hand, nothing private
+// whether you can touch the cards: only with a seat
+const seated = () => !!session?.seat;
 const view = createView(document.getElementById("table"), { viewer: me });
 
 let drag = null;      // what's being carried
@@ -46,10 +50,14 @@ function dispatch(action, fx = null) { session?.dispatch(action, fx); }
 function onChange(next, fx, by) {
   state = next;
   if (by) remote.delete(by); // their drop has landed
-  if (!state.seats.some((s) => s.id === me)) me = session?.seat ?? state.seats[0].id;
+  // you see the table from your seat (a spectator from the first seat's side); the host alone at
+  // the table can look from any seat
+  const viewingAs = session?.isHost && online.length < 2 && state.seats.some((s) => s.id === me);
+  if (!viewingAs) me = session?.seat ?? WATCH;
   view.viewer = me;
   draw(fx ?? {});
   refreshBar();
+  renderWatchers();
 }
 function undo() { if (!drag) { closeMenu(); session?.undo(); } }
 
@@ -144,7 +152,7 @@ function startHost(id, name, color) {
   netRef = net;
   online = [player];
   session = hostSession(net, st, { player, name }, {
-    onChange, save: hostSave(id), onRoster(list) { online = list; refreshBar(); draw(); },
+    onChange, save: hostSave(id), onRoster,
   });
   net.on("drag", onRemoteDrag);
   net.on("peek", onRemotePeek);
@@ -164,20 +172,25 @@ function startJoin(id, name, color) {
   }, 25000);
   session = clientSession(net, { player, name, color }, {
     onChange,
-    onWelcome(seat) {
+    onWelcome() {
       clearTimeout(giveUp);
-      if (!seat) { openGate({ step: "full", host: hostOwn }); return; }
       write(`joined:${id}`, "1");
-      me = seat; view.viewer = me;
+      me = session.seat ?? WATCH; view.viewer = me;
       closeGate();
       relayout();
     },
-    onRoster(list) { online = list; refreshBar(); draw(); },
+    onRoster,
     onLost() { remote.clear(); openGate({ step: "lost", host: hostOwn }); },
+    onKicked() { remote.clear(); openGate({ step: "kicked", host: hostOwn }); },
   });
   net.on("drag", onRemoteDrag);
   net.on("peek", onRemotePeek);
   net.start();
+}
+function onRoster(r) {
+  online = r.online; watchers = r.watchers;
+  onChange(state, null, null);
+  renderWatchers();
 }
 const hostOwn = () => { location.href = tableUrl("").replace(/[?&]t=[^&]*/, "").replace(/\?$/, ""); };
 
@@ -192,7 +205,7 @@ function refreshBar() {
   const host = !!session?.isHost, alone = online.length < 2;
   undoEl.disabled = !session?.canUndo();
   viewerEl.closest(".ct-group").hidden = !(host && alone && state.seats.length > 1);
-  document.getElementById("gather").hidden = !session;
+  document.getElementById("gather").hidden = !seated();
   document.getElementById("share").hidden = !session;
   if (host && !alone && me !== session.seat) { me = session.seat; view.viewer = me; draw(); }
   viewerEl.innerHTML = state.seats.map((s) =>
@@ -334,7 +347,7 @@ tableEl.addEventListener("pointerdown", (e) => {
   // a press on the card whose menu is open just closes it
   const reopen = menu && menu.forKey;
   if (menu && !menu.contains(e.target)) closeMenu();
-  if (e.button !== 0) return;
+  if (e.button !== 0 || !seated()) return;
   const t = targetOf(e.target);
   if (!t) return;
   e.preventDefault();
@@ -456,7 +469,7 @@ function setHover(t) {
 tableEl.addEventListener("contextmenu", (e) => {
   e.preventDefault();
   if (drag) return;
-  const t = targetOf(e.target);
+  const t = seated() ? targetOf(e.target) : null;
   if (t) openMenu(t, e.clientX, e.clientY); else closeMenu();
 });
 
@@ -669,6 +682,59 @@ function split(pileId, n) {
   dispatch({ type: "split", pile: pileId, parts });
 }
 
+// ---- who's watching, and what the host can do about each person -----------------------------
+
+// spectators' names in a row by the table; for the host, each one opens what they can do
+const watchersEl = document.createElement("div");
+watchersEl.className = "ct-watchers";
+document.body.appendChild(watchersEl);
+function renderWatchers() {
+  const host = !!session?.isHost, others = watchers.filter((w) => w.player !== player);
+  const me_ = !session?.seat && session && !host;
+  watchersEl.hidden = !others.length && !me_;
+  watchersEl.innerHTML =
+    (me_ ? `<div class="ct-watch-note">You're watching. The host can give you a seat.</div>` : "") +
+    (others.length ? `<span class="ct-watch-label">Watching</span>` + others.map((w) =>
+      `<button class="ct-chip" data-player="${w.player}" style="--seat:${w.color ?? "#9aa69e"}" ${host ? `title="What to do with ${esc(w.name)}"` : "disabled"}>${esc(w.name)}</button>`).join("") : "");
+}
+const esc = (t) => String(t ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+watchersEl.addEventListener("click", (e) => {
+  const b = e.target.closest(".ct-chip");
+  if (b && session?.isHost) openPersonMenu(b.dataset.player, b);
+});
+// the host clicking a seated player's name
+tableEl.addEventListener("click", (e) => {
+  if (!session?.isHost || e.target.closest?.(".ct-plate-edit")) return;
+  const plate = e.target.closest?.(".ct-plate");
+  const seat = plate && state.seats.find((x) => x.id === plate.dataset.seat);
+  if (seat?.player && seat.player !== player) openPersonMenu(seat.player, plate);
+});
+
+function openPersonMenu(who, anchor) {
+  closeMenu();
+  const seat = state.seats.find((x) => x.player === who);
+  const name = seat?.name ?? watchers.find((w) => w.player === who)?.name ?? "them";
+  menu = document.createElement("div");
+  menu.className = "ct-menu ct-person";
+  const items = seat
+    ? [["Make spectator", "Get up from the seat and watch; the seat and its hand stay", () => session.unseat(who)]]
+    : [["Give a seat", session.canSeat() ? "Sit them at the table" : "All six seats are taken", () => session.seatPlayer(who), !session.canSeat()]];
+  menu.innerHTML = `<div class="ct-person-name">${esc(name)}</div>` + items.map(([label, tip, , off], i) =>
+    `<button class="ct-item" data-i="${i}" title="${tip}"${off ? " disabled" : ""}><span>${label}</span></button>`).join("") +
+    `<hr><button class="ct-item ct-danger" data-kick><span>Kick from the table</span></button>`;
+  document.body.appendChild(menu);
+  menu.querySelectorAll("[data-i]").forEach((b) => b.addEventListener("click", () => { closeMenu(); items[+b.dataset.i][2](); }));
+  const kick = menu.querySelector("[data-kick]");
+  // kicking can't be undone: it asks once more
+  kick.addEventListener("click", () => {
+    if (kick.dataset.sure) { closeMenu(); session.kick(who); return; }
+    kick.dataset.sure = "1";
+    kick.querySelector("span").textContent = `Kick ${name} for good?`;
+  });
+  const a = anchor.getBoundingClientRect();
+  placeMenu(a.left, a.bottom + 4);
+}
+
 // ---- your name and color, from the pencil by your name ---------------------------------------
 
 let editor = null;
@@ -712,6 +778,8 @@ tableEl.addEventListener("click", (e) => {
 });
 addEventListener("pointerdown", (e) => {
   if (editor && !editor.contains(e.target) && !e.target.closest?.(".ct-plate-edit")) closeEditor();
+  // a person's menu, opened from outside the table, closes on a click anywhere else
+  if (menu?.classList.contains("ct-person") && !menu.contains(e.target) && !e.target.closest?.(".ct-chip, .ct-plate")) closeMenu();
 });
 
 // ---- your hand's buttons, beside it whenever you hold cards ----------------------------------
@@ -763,7 +831,7 @@ addEventListener("keydown", (e) => {
     return;
   }
   if (e.metaKey || e.ctrlKey || e.altKey) return;
-  if (e.target.closest?.("input, select, textarea")) return;
+  if (e.target.closest?.("input, select, textarea") || !seated()) return;
   if (drag) {
     if (e.key.toLowerCase() === "f" && !e.repeat) { e.preventDefault(); flipCarried(); }
     return;

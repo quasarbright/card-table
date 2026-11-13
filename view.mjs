@@ -447,6 +447,7 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
       const a = seatAngle(i, n);
       const r = (FELT_R + TABLE_R) / 2;
       const plate = el("div", "ct-plate", seatLayer);
+      plate.dataset.seat = seat.id;
       plate.style.setProperty("--seat", seat.color);
       // an empty seat says so; a player who has dropped off is dimmed until they're back
       const open = interactive && o.online && !seat.player;

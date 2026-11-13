@@ -18,12 +18,17 @@ import { apply, MAX_SEATS } from "./table.mjs";
 const HISTORY = 300;
 // who sits where isn't part of the game: undo never takes it back, and it's written into
 // every earlier table too, so undoing past someone's arrival keeps them seated
-const SEATING = new Set(["sit", "setSeats", "setPlayer"]);
+const SEATING = new Set(["sit", "stand", "setSeats", "setPlayer"]);
 
-// me: { player, name, color }; hooks: { onChange(state, fx), onRoster(players), save(state) }
+// People who join start out watching. The host can give them a seat, ask a seated player to
+// watch instead, or send someone away for good (while this table is open).
+//
+// me: { player, name, color }; hooks: { onChange(state, fx), onRoster({ online, watchers }), save(state) }
 export function hostSession(net, state, me, hooks) {
   const past = [];                 // [{ state, by }] before each change, newest last
   const peers = new Map();         // peer id → player id
+  const people = new Map([[me.player, { name: me.name, color: me.color }]]); // player → name, color
+  const banned = new Set();
   const seatOf = (player) => state.seats.find((s) => s.player === player)?.id ?? null;
 
   function commit(action, by, fx = null, id = null, from = null) {
@@ -46,7 +51,39 @@ export function hostSession(net, state, me, hooks) {
   }
 
   function online() { return [me.player, ...new Set(peers.values())]; }
-  function roster() { const list = online(); net.send("roster", list); hooks.onRoster(list); }
+  // who's connected, and who of them is watching rather than sitting
+  function roster() {
+    const list = online();
+    const r = { online: list, watchers: list.filter((p) => !seatOf(p)).map((p) => ({ player: p, ...people.get(p) })) };
+    net.send("roster", r); hooks.onRoster(r);
+  }
+  // a seat for someone: an empty one, or a new one if there's room
+  function seatPlayer(player) {
+    if (seatOf(player) || !people.has(player)) return;
+    let seat = state.seats.find((s) => !s.player)?.id;
+    if (!seat && state.seats.length < MAX_SEATS) {
+      commit({ type: "setSeats", n: state.seats.length + 1 }, null);
+      seat = state.seats.at(-1).id;
+    }
+    if (!seat) return;
+    const { name, color } = people.get(player);
+    commit({ type: "sit", seat, player, name, color }, null);
+    roster();
+  }
+  // their seat stays, empty, with whatever is in its hand
+  function unseat(player) {
+    const seat = seatOf(player);
+    if (!seat || player === me.player) return;
+    commit({ type: "stand", seat }, null);
+    roster();
+  }
+  function kick(player) {
+    if (player === me.player) return;
+    unseat(player);
+    banned.add(player);
+    for (const [peer, p] of peers) if (p === player) { net.send("kicked", {}, peer); peers.delete(peer); }
+    roster();
+  }
 
   function undo() {
     if (!past.length) return;
@@ -56,23 +93,21 @@ export function hostSession(net, state, me, hooks) {
     hooks.onChange(state, null, null);
   }
 
-  // someone arrives: find them their seat (the one they had, an empty one, or a new one)
+  // someone arrives: back in the seat they had, or watching
   net.on("hello", ({ player, name, color }, peer) => {
+    if (banned.has(player)) { net.send("kicked", {}, peer); return; }
     peers.set(peer, player);
-    let seat = seatOf(player) ?? state.seats.find((s) => !s.player)?.id;
-    if (!seat && state.seats.length < MAX_SEATS) {
-      commit({ type: "setSeats", n: state.seats.length + 1 }, null);
-      seat = state.seats.at(-1).id;
-    }
-    if (seat) commit({ type: "sit", seat, player, name, color }, null);
-    net.send("welcome", { state, seat: seat ?? null, depth: past.length }, peer);
+    people.set(player, { name, color });
+    net.send("welcome", { state, depth: past.length }, peer);
     roster();
   });
+  // only people with a seat touch the table
   net.on("act", ({ id, action, fx }, peer) => {
-    const player = peers.get(peer);
-    if (player) commit(action, seatOf(player), fx, id, peer);
+    const seat = seatOf(peers.get(peer));
+    if (seat) commit(action, seat, fx, id, peer);
+    else net.send("reject", { id }, peer);
   });
-  net.on("undo", (_, peer) => { if (peers.has(peer)) undo(); });
+  net.on("undo", (_, peer) => { if (seatOf(peers.get(peer))) undo(); });
   net.onLeave((peer) => { if (peers.delete(peer)) roster(); });
 
   return {
@@ -82,7 +117,8 @@ export function hostSession(net, state, me, hooks) {
     dispatch(action, fx) { commit(action, seatOf(me.player), fx); },
     undo,
     canUndo() { return past.length > 0; },
-    online,
+    online, seatPlayer, unseat, kick,
+    canSeat: () => state.seats.some((s) => !s.player) || state.seats.length < MAX_SEATS,
     // start over from this table, with no history (tests)
     replace(next) {
       past.length = 0; state = next; hooks.save(state);
@@ -92,10 +128,11 @@ export function hostSession(net, state, me, hooks) {
   };
 }
 
-// hooks: { onChange(state, fx, by), onWelcome(seat), onRoster(players), onLost() }
+// hooks: { onChange(state, fx, by), onWelcome(), onRoster({ online, watchers }), onLost(), onKicked() }
 export function clientSession(net, me, hooks) {
   let confirmed = null, pending = [], shown = null;
-  let host = null, seat = null, depth = 0, counter = 0; // depth: how many changes the host can undo
+  let host = null, depth = 0, counter = 0; // depth: how many changes the host can undo
+  const mySeat = () => shown?.seats.find((s) => s.player === me.player)?.id ?? null;
 
   // your changes the host hasn't confirmed yet, replayed on top of what it has
   function rebuild() {
@@ -109,9 +146,9 @@ export function clientSession(net, me, hooks) {
 
   net.onJoin(hello);
   net.on("welcome", (m, peer) => {
-    host = peer; confirmed = m.state; seat = m.seat; depth = m.depth; pending = [];
+    host = peer; confirmed = m.state; depth = m.depth; pending = [];
     rebuild();
-    hooks.onWelcome(seat);
+    hooks.onWelcome();
     hooks.onChange(shown, { instant: true }, null);
   });
   net.on("applied", (m, peer) => {
@@ -131,23 +168,24 @@ export function clientSession(net, me, hooks) {
     rebuild();
     hooks.onChange(shown, null, null);
   });
-  net.on("roster", (list, peer) => { if (peer === host) hooks.onRoster(list); });
+  net.on("roster", (r, peer) => { if (peer === host) hooks.onRoster(r); });
+  net.on("kicked", (_, peer) => { if (!host || peer === host) { host = null; net.leave(); hooks.onKicked(); } });
   net.onLeave((peer) => { if (peer === host) hooks.onLost(); });
 
   return {
     isHost: false,
     get state() { return shown; },
-    get seat() { return seat; },
+    get seat() { return mySeat(); },
     get connected() { return !!confirmed; },
     dispatch(action, fx) {
-      if (!confirmed) return;
+      if (!confirmed || !mySeat()) return;
       const id = `${me.player}:${counter++}`;
       pending.push({ id, action });
       rebuild();
-      hooks.onChange(shown, fx, seat);
+      hooks.onChange(shown, fx, mySeat());
       net.send("act", { id, action, fx }, host);
     },
     undo() { if (this.canUndo()) net.send("undo", {}, host); },
-    canUndo() { return !!seat && depth > 0 && !pending.length; },
+    canUndo() { return !!mySeat() && depth > 0 && !pending.length; },
   };
 }

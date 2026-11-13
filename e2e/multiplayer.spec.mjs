@@ -36,15 +36,32 @@ async function center(page, sel) {
 }
 const at = (page, x, y) => page.evaluate(([x, y]) => window.cardTable.view.toScreen(x, y), [x, y]);
 
+// the host gives a watcher a seat, from their name at the top
+async function seat(A, B, name) {
+  await A.locator(".ct-chip", { hasText: name }).click();
+  await A.getByRole("button", { name: "Give a seat" }).click();
+  await B.waitForFunction(() => !!window.cardTable?.session?.seat);
+}
 async function twoAtATable(context) {
   const A = await tab(context), B = await tab(context);
   await host(A, "Mike");
   await join(B, A.url(), "Ana");
+  await seat(A, B, "Ana");
   return { A, B };
 }
 
-test("host, then join from the link: the joiner gets the next seat and both see the names", async ({ context }) => {
-  const { A, B } = await twoAtATable(context);
+test("joining from the link you watch first; the host gives you the next seat", async ({ context }) => {
+  const A = await tab(context), B = await tab(context);
+  await host(A, "Mike");
+  await join(B, A.url(), "Ana");
+  // watching: no seat, a note saying so, and Ana's name on the host's screen
+  expect(await B.evaluate(() => window.cardTable.session.seat)).toBeNull();
+  await expect(B.locator(".ct-watch-note")).toBeVisible();
+  await expect(A.locator(".ct-chip", { hasText: "Ana" })).toBeVisible();
+  expect((await state(A)).seats).toHaveLength(1);
+  await seat(A, B, "Ana");
+  await expect(B.locator(".ct-watch-note")).toHaveCount(0);
+  await expect(A.locator(".ct-chip")).toHaveCount(0);
   expect(await B.evaluate(() => window.cardTable.session.seat)).toBe("s1");
   await expect(A.locator(".ct-plate", { hasText: "Ana" })).toBeVisible();
   await expect(B.locator(".ct-plate", { hasText: "Mike" })).toBeVisible();
@@ -103,6 +120,7 @@ test("undoing past someone's arrival keeps them at the table", async ({ context 
   await host(A, "Mike");
   await A.evaluate(() => window.cardTable.shufflePile("deck"));
   await join(B, A.url(), "Ana");
+  await seat(A, B, "Ana");
   await B.click("#undo");
   await settle(A);
   const s = await state(A);
@@ -163,6 +181,7 @@ test("pick a color with your name; a joiner asking for a taken one gets a free o
   await B.locator('.ct-swatch[data-color="#a3d977"]').click();
   await B.getByRole("button", { name: "Join table" }).click();
   await B.waitForFunction(() => window.cardTable?.session?.connected);
+  await seat(A, B, "Ana");
   const seats = (await state(A)).seats;
   expect(seats[1].name).toBe("Ana");
   expect(seats[1].color).not.toBe("#a3d977");
@@ -201,4 +220,42 @@ test("while you look through a stack, the others see your ring on it but not the
   await B.keyboard.press("Escape");
   await settle(A);
   await expect(A.locator(".ct-tag")).toHaveCount(0);
+});
+
+test("a spectator can't move cards", async ({ context }) => {
+  const A = await tab(context), B = await tab(context);
+  await host(A, "Mike");
+  await join(B, A.url(), "Ana");
+  const top = (await state(B)).piles.deck.cards.at(-1);
+  await B.mouse.move(...Object.values(await center(B, cardSel(top))));
+  await B.mouse.down();
+  const to = await at(B, 650, 420);
+  await B.mouse.move(to.x, to.y, { steps: 8 });
+  await B.mouse.up();
+  await settle(A);
+  expect((await state(A)).piles.deck.cards).toHaveLength(52);
+  await expect(B.locator(".ct-menu")).toHaveCount(0);
+});
+
+test("the host can make a player a spectator, and kick someone off the table", async ({ context }) => {
+  const { A, B } = await twoAtATable(context);
+  await A.evaluate(() => window.cardTable.deal("deck", 2));
+  await A.waitForTimeout(700);
+  await A.locator('.ct-plate[data-seat="s1"]').click();
+  await A.getByRole("button", { name: "Make spectator" }).click();
+  await B.waitForFunction(() => !window.cardTable.session.seat);
+  // the seat stays, empty, with Ana's cards in its hand
+  const s = await state(A);
+  expect(s.seats[1].player).toBeNull();
+  expect(s.hands.s1).toHaveLength(2);
+  await expect(A.locator(".ct-chip", { hasText: "Ana" })).toBeVisible();
+  // kicking asks twice
+  await A.locator(".ct-chip", { hasText: "Ana" }).click();
+  await A.getByRole("button", { name: "Kick from the table" }).click();
+  await A.getByRole("button", { name: "Kick Ana for good?" }).click();
+  await expect(B.getByRole("heading", { name: "You were removed from the table" })).toBeVisible();
+  await expect(A.locator(".ct-chip")).toHaveCount(0);
+  // and can't come back to this table
+  await B.goto(A.url());
+  await expect(B.getByRole("heading", { name: "You were removed from the table" })).toBeVisible({ timeout: 10000 });
 });

@@ -21,7 +21,7 @@ export function wireSwatches(root, onPick) {
 
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 
-// o.step: "start" | "name" | "connecting" | "unreachable" | "full" | "lost"
+// o.step: "start" | "name" | "connecting" | "unreachable" | "full" | "kicked" | "lost"
 // o.name, o.color: what to fill in; o.done(name, color): confirmed; o.joining: joining rather than hosting;
 // o.retry(), o.host(): the buttons on the error screens
 export function openGate(o) {
@@ -76,6 +76,11 @@ export function openGate(o) {
   } else if (o.step === "full") {
     show(`<h1 id="ct-gate-title">This table is full</h1>
       <p>Six people are already sitting at it.</p>
+      <button class="ct-act ct-act-ink" data-go>Host your own table</button>`);
+    card.querySelector("[data-go]").addEventListener("click", o.host);
+  } else if (o.step === "kicked") {
+    show(`<h1 id="ct-gate-title">You were removed from the table</h1>
+      <p>The host took you off this table. You can host one of your own.</p>
       <button class="ct-act ct-act-ink" data-go>Host your own table</button>`);
     card.querySelector("[data-go]").addEventListener("click", o.host);
   } else if (o.step === "lost") {
