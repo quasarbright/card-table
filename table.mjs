@@ -9,7 +9,7 @@
 // state = {
 //   seats: [{ id, name, color }],                 // in order around the table
 //   cards: { [id]: { id, rank, suit, faceUp, privateTo } },
-//   piles: { [id]: { id, x, y, rot, z, cards: [bottom … top] } },
+//   piles: { [id]: { id, x, y, rot, z, messy, cards: [bottom … top] } },  // messy: top few show
 //   hands: { [seatId]: [cardId, …] },             // left to right, as the owner sees them
 //   nextZ,                                        // stacking order for piles
 // }
@@ -106,6 +106,8 @@ export function tiltedToward(state, cardId) {
 // { type: "setPrivate", cards: [ids], seat } seat = null makes them hidden from everyone again
 // { type: "shuffle", pile, order }           order: the pile's cards, bottom → top
 // { type: "deal", pile, count, seats }       count cards to each seat's hand, one at a time
+// { type: "setMessy", pile, messy }         squared up (only the top shows) or loosely heaped
+// { type: "batch", actions: [...] }         several actions as one step (one undo)
 // { type: "split", pile, parts: [{ id, x, y, rot }] }  cut into parts.length stacks; parts[0]
 //                                            keeps the pile's id and gets the bottom cards
 // { type: "gather", id, x, y, rot }          every card into one face-down stack
@@ -174,6 +176,7 @@ const ACTIONS = {
   flipPile(s, { pile }) {
     const p = s.piles[pile];
     p.cards.reverse();
+    p.messy = false; // a stack turned over lands squared up
     for (const id of p.cards) { s.cards[id].faceUp = !s.cards[id].faceUp; s.cards[id].privateTo = null; }
     raise(s, pile);
   },
@@ -195,6 +198,8 @@ const ACTIONS = {
       ACTIONS.moveCards(s, { cards: [id], to: { hand: seat } });
     }
   },
+  setMessy(s, { pile, messy }) { s.piles[pile].messy = !!messy; },
+  batch(s, { actions }) { for (const a of actions) ACTIONS[a.type](s, a); },
   split(s, { pile, parts }) {
     const cards = s.piles[pile].cards, n = parts.length;
     if (parts[0].id !== pile || n < 2 || n > cards.length) throw new Error("bad split");

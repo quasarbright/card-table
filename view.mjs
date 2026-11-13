@@ -11,11 +11,17 @@ export const OWN_HAND_R = FELT_R - 66;      // the viewer's own hand, a bit clos
 export const OWN_HAND_SCALE = 1.3;
 export const GRIP_REACH = CARD_H / 2 + 17; // from a stack's middle to its count tab
 const HELD_TILT = 38, LOOK_TILT = 28; // degrees: a held card, a face-down card being looked at
-const FAN_COUNT = 5, FAN_STEP = 12 / DEG, FAN_SHIFT = 8; // a face-up stack shows this many corners
 const TURN_MS = 220, STACK_TURN_MS = 460;
 const SLOT = "__slot";
 
-// spacing between neighbours in a hand of k cards
+// a steady pseudo-random number in [-1, 1] for a card: a messy stack keeps its look
+function jitter(id, salt) {
+  let h = 2166136261 ^ salt;
+  for (let i = 0; i < id.length; i++) h = Math.imul(h ^ id.charCodeAt(i), 16777619);
+  return ((h >>> 0) % 2001) / 1000 - 1;
+}
+
+// spacing between neighbors in a hand of k cards
 export function handGap(own, k) { return Math.min(own ? 30 : 20, (own ? 420 : 260) / Math.max(1, k - 1)); }
 
 export function createView(root, { viewer = "s0", interactive = true } = {}) {
@@ -28,6 +34,7 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
   const cardLayer = el("div", "ct-cards", stage);
   const gripLayer = el("div", "ct-grips", stage);
   const tagLayer = el("div", "ct-tags", stage);
+  const eyeLayer = el("div", "ct-eyes", stage);
   const slotEl = el("div", "ct-slot", cardLayer); // the gap a carried card would drop into
   stage.style.width = stage.style.height = `${2 * TABLE_R}px`;
 
@@ -91,17 +98,19 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
       const px = whole ? o.drag.x : p.x, py = whole ? o.drag.y : p.y, prot = whole ? o.drag.rot : p.rot;
       const cards = p.cards.filter((id) => !carried.has(id));
       const k = cards.length;
-      // a face-up stack fans its top few cards about their bottom-left corners, the way you'd
-      // thumb a stack open, so each one's index shows
-      let fan = 0;
-      while (fan < FAN_COUNT && fan < k && st.cards[cards[k - 1 - fan]].faceUp) fan++;
-      const fanFrom = k - fan, shift = Math.max(0, fan - 1) * FAN_SHIFT;
       const c = Math.cos(prot), s = Math.sin(prot);
       cards.forEach((id, i) => {
         const d = Math.min(i, 40) * 0.22; // a stack's thickness
-        const a = fan > 1 ? -(k - 1 - Math.max(i, fanFrom)) * FAN_STEP : 0;
-        const ox = -CARD_W / 2 + (CARD_W / 2) * Math.cos(a) + (CARD_H / 2) * Math.sin(a) + shift - d;
-        const oy = CARD_H / 2 + (CARD_W / 2) * Math.sin(a) - (CARD_H / 2) * Math.cos(a) - d;
+        let ox = -d, oy = -d, a = 0;
+        if (p.messy && k > 1) {
+          // loosely heaped: the top three step back up and to the left so their corners show,
+          // the rest lie askew under the third with only their edges peeking out
+          const depth = Math.min(k - 1 - i, 2), deep = k - 1 - i > 2;
+          const j = (n) => jitter(id, n);
+          ox = -depth * 15 + 15 + j(1) * (deep ? 6 : 2.5);
+          oy = -depth * 7 + 7 + j(2) * (deep ? 5 : 2);
+          a = (deep ? j(3) * 0.24 : j(3) * 0.11 - depth * 0.05);
+        }
         out.set(id, {
           x: px + ox * c - oy * s, y: py + ox * s + oy * c, rot: prot + a,
           z: (whole ? 5000 : pi * 60) + i, scale: whole ? 1.04 : 1, lifted: whole,
@@ -112,19 +121,34 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
       const own = seat.id === viewer;
       const list = st.hands[seat.id].filter((id) => !carried.has(id));
       const gapAt = o.target?.hand === seat.id ? o.target.slot : -1;
+      // reordering your own hand: the carried card rides along the hand, a little raised, and
+      // the others make room for it; anything else coming in opens a wider gap with a ghost
+      const reorder = gapAt >= 0 && o.drag?.inHand;
       if (gapAt >= 0) list.splice(gapAt, 0, SLOT);
       list.forEach((id, i) => {
         // the cards either side of the gap step aside so it's wide enough to see
-        const q = handSlot(si, n, own, i, list.length, gapAt < 0 ? 0 : Math.sign(i - gapAt));
-        if (id === SLOT) { out.slot = { ...q, z: 10000 + si * 100 + i }; return; }
+        const q = handSlot(si, n, own, i, list.length, gapAt < 0 || reorder ? 0 : Math.sign(i - gapAt));
+        if (id === SLOT) {
+          if (reorder) out.ride = { ...q, z: 10000 + si * 100 + i, angle: seatAngle(si, n) };
+          else out.slot = { ...q, z: 10000 + si * 100 + i };
+          return;
+        }
         out.set(id, { ...q, z: 10000 + si * 100 + i, hand: seat.id, own, bob: own ? i : null });
       });
     });
     if (o.drag?.cards) {
-      const big = o.drag.from?.hand === viewer ? OWN_HAND_SCALE : 1;
-      o.drag.cards.forEach((id, i) => out.set(id, {
-        x: o.drag.x, y: o.drag.y, rot: o.drag.rot, z: 20000 + i, scale: big * 1.1, lifted: true, carried: true,
-      }));
+      const r = out.ride;
+      o.drag.cards.forEach((id, i) => {
+        if (r) {
+          // along the hand's line, under the pointer, raised toward the middle of the table
+          const right = { x: Math.sin(r.angle), y: -Math.cos(r.angle) }, outward = { x: Math.cos(r.angle), y: Math.sin(r.angle) };
+          const along = (o.drag.x - r.x) * right.x + (o.drag.y - r.y) * right.y;
+          out.set(id, {
+            x: r.x + right.x * along - outward.x * 16, y: r.y + right.y * along - outward.y * 16,
+            rot: r.rot, z: r.z, scale: r.scale, carried: true, riding: true, hand: viewer,
+          });
+        } else out.set(id, { x: o.drag.x, y: o.drag.y, rot: o.drag.rot, z: 20000 + i, scale: 1.1, lifted: true, carried: true });
+      });
     }
     return out;
   }
@@ -251,7 +275,9 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
         el("div", "ct-inner", e);
         cardEls.set(id, e);
       }
-      const look = canSee(st, id, viewer) ? "face" : "back";
+      let look = canSee(st, id, viewer) ? "face" : "back";
+      // a card carried out of your hand shows whichever side you'll put down
+      if (pl.carried && !pl.riding && o.drag?.faceUp != null) look = o.drag.faceUp ? "face" : "back";
       // a whole stack turning over turns as one block, about the stack's middle
       const whole = !o.instant && shown.has(id) && o.stackFlip?.cards.has(id);
       if (shown.get(id) !== look || whole) {
@@ -311,7 +337,7 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
     }
     for (const [id, e] of cardEls) if (!live.has(id)) { e.remove(); cardEls.delete(id); shown.delete(id); springs.delete(id); }
     followers = [];
-    if (interactive) { renderGrips(st, o); renderZones(st, place, o); renderTags(st, o); }
+    if (interactive) { renderGrips(st, o); renderZones(st, place, o); renderTags(st, o); renderEyes(st, place, o); }
     wake();
   }
 
@@ -376,7 +402,7 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
       slotEl.style.zIndex = q.z;
       slotEl.style.transform = `translate(${q.x - CARD_W / 2}px, ${q.y - CARD_H / 2}px) rotate(${q.rot * DEG}deg) scale(${q.scale})`;
     }
-    if (!o.drag) return;
+    if (!o.drag || o.drag.inHand) return;
     const n = st.seats.length;
     st.seats.forEach((seat, i) => {
       const own = seat.id === viewer;
@@ -411,7 +437,41 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
     }
   }
 
+  // An eye on the cards you're touching: crossed out while only you can see the face, open when
+  // everyone can. Your peeks, and whatever you're carrying (your hand has one by its buttons).
+  function renderEyes(st, place, o) {
+    eyeLayer.replaceChildren();
+    for (const [id, pl] of place) {
+      const card = st.cards[id];
+      let open;
+      if (pl.carried) {
+        if (pl.riding) continue;
+        open = o.drag?.faceUp != null ? o.drag.faceUp : card.faceUp;
+      } else if (!pl.hand && !card.faceUp && card.privateTo === viewer) open = false;
+      else continue;
+      const eye = el("div", "ct-eye", eyeLayer);
+      eye.innerHTML = eyeSVG(open);
+      eye.title = open ? "Everyone can see this card" : "Only you can see this card";
+      eye.dataset.card = id;
+      eye.classList.toggle("ct-eye-open", open);
+      const follow = () => {
+        const c = curOf(id);
+        if (!c) return;
+        // the card's top right corner, as placed on the table
+        const cs = Math.cos(c.rot), sn = Math.sin(c.rot), hx = (CARD_W / 2) * c.scale - 4, hy = -(CARD_H / 2) * c.scale + 4;
+        eye.style.transform = `translate(${c.x + hx * cs - hy * sn}px, ${c.y + hx * sn + hy * cs}px) rotate(${-frame.rot * DEG}deg) translate(-50%, -50%)`;
+      };
+      follow(); followers.push(follow);
+    }
+  }
+
   return view;
+}
+
+// an eye, or the same eye struck through
+export function eyeSVG(open) {
+  return `<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>${open ? "" : `<path d="M4 20 20 4" stroke-width="2.4"/>`}</svg>`;
 }
 
 function el(tag, cls, parent) {

@@ -145,3 +145,16 @@ test("dealing a whole stack: the pile is used up and the counts differ by at mos
   assert.equal(s.piles.deck, undefined);
   assert.deepEqual(Object.values(s.hands).map((h) => h.length), [11, 11, 10, 10, 10]);
 });
+
+test("batch applies its actions in order; flipping a stack squares it up", () => {
+  let s = apply(newTable(2), { type: "setMessy", pile: "deck", messy: true });
+  assert.equal(s.piles.deck.messy, true);
+  s = apply(s, { type: "batch", actions: [
+    { type: "moveCards", cards: ["AS"], to: { newPile: { id: "a", x: 400, y: 500 } } },
+    { type: "flip", cards: ["AS"] },
+    { type: "flipPile", pile: "deck" },
+  ] });
+  assert.equal(s.cards.AS.faceUp, true);
+  assert.equal(s.piles.deck.messy, false);
+  checkConservation(s);
+});

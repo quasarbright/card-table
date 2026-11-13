@@ -2,7 +2,7 @@
 // (see table.mjs), which are applied and drawn. Everything here is local for now; the
 // actions are already the messages a shared table would send.
 import { newTable, apply, shuffledOrder, locate, handCenter, seatAngle, MAX_SEATS, RANKS, SUITS, CARD_W, CARD_H, TABLE_R, FELT_R } from "./table.mjs";
-import { createView, HAND_R, OWN_HAND_R, OWN_HAND_SCALE, GRIP_REACH, handGap } from "./view.mjs";
+import { createView, HAND_R, OWN_HAND_R, OWN_HAND_SCALE, GRIP_REACH, handGap, eyeSVG } from "./view.mjs";
 import { suitDefs } from "./faces.mjs";
 import { startAboutDiagram } from "./about.mjs";
 
@@ -28,13 +28,34 @@ function load() {
 }
 function save() { try { localStorage.setItem(SAVE_KEY, JSON.stringify(state)); } catch {} }
 
+// every change can be taken back: the states before each one, newest last
+const past = [], future = [];
+const HISTORY = 300;
 function dispatch(action, renderOpts = {}) {
+  past.push(state);
+  if (past.length > HISTORY) past.shift();
+  future.length = 0;
   state = apply(state, action);
+  commit(renderOpts);
+}
+function commit(renderOpts = {}) {
   save();
   draw(renderOpts);
+  undoEl.disabled = !past.length;
+  if (!state.seats.some((s) => s.id === me)) setViewer(state.seats[0].id);
+  else fillSelects();
+}
+function undo() {
+  if (!past.length || drag) return;
+  future.push(state); state = past.pop(); closeMenu(); commit();
+}
+function redo() {
+  if (!future.length || drag) return;
+  past.push(state); state = future.pop(); closeMenu(); commit();
 }
 
 function draw(o = {}) {
+  placeHandBar();
   view.render(state, {
     ...o,
     hover: drag || pending ? null : hovered?.card,
@@ -54,6 +75,8 @@ function relayout() {
 
 // ---- the bottom bar ------------------------------------------------------------------------
 
+const undoEl = document.getElementById("undo");
+undoEl.addEventListener("click", undo);
 const playersEl = document.getElementById("players");
 const viewerEl = document.getElementById("viewer");
 function fillSelects() {
@@ -68,8 +91,6 @@ playersEl.addEventListener("click", (e) => {
   const n = +e.target.closest("[data-n]")?.dataset.n;
   if (!n || n === state.seats.length) return;
   dispatch({ type: "setSeats", n });
-  if (!state.seats.some((s) => s.id === me)) me = state.seats[0].id;
-  setViewer(me);
 });
 viewerEl.addEventListener("click", (e) => {
   const id = e.target.closest("[data-seat]")?.dataset.seat;
@@ -205,6 +226,7 @@ tableEl.addEventListener("pointermove", (e) => {
   if (drag) {
     drag.x = p.x + drag.offX; drag.y = p.y + drag.offY;
     drag.target = dropTarget(p.x, p.y);
+    drag.inHand = drag.from?.hand === me && drag.target?.hand === me;
     draw();
   }
 });
@@ -218,6 +240,8 @@ function startDrag(t, at) {
   } else {
     const q = place.get(t.card);
     drag = { active: true, cards: [t.card], from: t, rot: view.uprightRot(), offX: q.x - at.x, offY: q.y - at.y };
+    // out of your hand, a card goes down face up unless you flip it on the way
+    if (t.hand === me) drag.faceUp = true;
   }
   drag.pointerId = t.pointerId;
   drag.x = at.x + drag.offX; drag.y = at.y + drag.offY;
@@ -225,6 +249,7 @@ function startDrag(t, at) {
 
 function flipCarried() {
   if (!drag) return;
+  if (drag.faceUp != null) { drag.faceUp = !drag.faceUp; draw(); return; }
   if (drag.whole) flipStack(drag.pile, { x: drag.x, y: drag.y });
   else dispatch({ type: "flip", cards: drag.cards });
 }
@@ -249,10 +274,14 @@ tableEl.addEventListener("pointerup", (e) => {
   } else {
     const from = d.from;
     const alone = from.pile && state.piles[from.pile].cards.length === 1;
-    if (to?.pile) dispatch({ type: "moveCards", cards: d.cards, to: { pile: to.pile } });
-    else if (to?.hand) dispatch({ type: "moveCards", cards: d.cards, to: { hand: to.hand, index: to.index } });
-    else if (alone) dispatch({ type: "movePile", pile: from.pile, x: d.x, y: d.y, rot: d.rot });
-    else dispatch({ type: "moveCards", cards: d.cards, to: { newPile: { id: newId(), x: d.x, y: d.y, rot: d.rot + (Math.random() - .5) * 0.06 } } });
+    let act;
+    if (to?.pile) act = { type: "moveCards", cards: d.cards, to: { pile: to.pile } };
+    else if (to?.hand) act = { type: "moveCards", cards: d.cards, to: { hand: to.hand, index: to.index } };
+    else if (alone) act = { type: "movePile", pile: from.pile, x: d.x, y: d.y, rot: d.rot };
+    else act = { type: "moveCards", cards: d.cards, to: { newPile: { id: newId(), x: d.x, y: d.y, rot: d.rot + (Math.random() - .5) * 0.06 } } };
+    // out of your hand onto the table: face up, unless it was flipped on the way
+    if (d.faceUp && !to?.hand) act = { type: "batch", actions: [act, { type: "flip", cards: d.cards }] };
+    dispatch(act);
   }
 });
 tableEl.addEventListener("pointercancel", (e) => {
@@ -304,6 +333,19 @@ function deal(pileId, count) {
   const delays = new Map(order.map((id, k) => [id, k * 70]));
   dispatch({ type: "deal", pile: pileId, count, seats }, { delays });
 }
+// lay your hand out face up in a row on the table, in front of you
+function showHand(seat) {
+  const hand = state.hands[seat];
+  if (!hand.length) return;
+  const i = state.seats.findIndex((x) => x.id === seat), n = state.seats.length, a = seatAngle(i, n);
+  const c = handCenter(i, n, HAND_R - 120), right = { x: Math.sin(a), y: -Math.cos(a) };
+  const gap = Math.min(CARD_W + 8, 520 / Math.max(1, hand.length - 1));
+  const actions = hand.map((id, k) => {
+    const along = (k - (hand.length - 1) / 2) * gap;
+    return { type: "moveCards", cards: [id], to: { newPile: { id: newId(), x: c.x + right.x * along, y: c.y + right.y * along, rot: a - Math.PI / 2 } } };
+  });
+  dispatch({ type: "batch", actions: [...actions, { type: "flip", cards: [...hand] }] });
+}
 function sortHand(seat) {
   const key = (id) => SUITS.indexOf(state.cards[id].suit) * 20 + RANKS.indexOf(state.cards[id].rank);
   const sorted = [...state.hands[seat]].sort((a, b) => key(a) - key(b));
@@ -322,9 +364,9 @@ function openMenu(t, x, y) {
   const sep = () => { if (items.length && items.at(-1)) items.push(null); };
   const pile = t.pile ? state.piles[t.pile] : null;
   const c = t.card ? state.cards[t.card] : null;
-  const look = () => item(c.privateTo === me ? "Stop looking" : "Look at it", "P", () => toggleLook(t));
+  const look = () => item(c.privateTo === me ? "Stop peeking" : isStack(t) ? "Peek top card" : "Peek", "P", () => toggleLook(t));
   if (t.hand) {
-    item(c.faceUp ? "Hide it again" : "Show everyone", "F", () => flipTarget(t));
+    item("Show hand", "", () => showHand(t.hand));
     if (state.hands[t.hand].length > 1) item("Sort hand", "", () => sortHand(t.hand));
   } else if (isStack(t)) {
     // F turns the whole stack over; the top card on its own is ⇧F
@@ -340,6 +382,7 @@ function openMenu(t, x, y) {
   if (pile && pile.cards.length > 1) {
     sep();
     item("Shuffle", "S", () => shufflePile(pile.id));
+    item(pile.messy ? "Straighten stack" : "Show top few", "", () => dispatch({ type: "setMessy", pile: pile.id, messy: !pile.messy }));
     item("Deal…", "", () => showDeal(pile.id), true);
     item("Split…", "", () => showSplit(pile.id), true);
   }
@@ -447,10 +490,47 @@ function split(pileId, n) {
   dispatch({ type: "split", pile: pileId, parts });
 }
 
+// ---- your hand's buttons, beside it whenever you hold cards ----------------------------------
+
+const handBar = document.createElement("div");
+handBar.className = "ct-handbar";
+handBar.innerHTML = `
+  <span class="ct-handbar-eye" title="Only you can see your hand">${eyeSVG(false)}</span>
+  <button data-show title="Lay your hand face up on the table, in front of you">Show hand</button>
+  <button data-sort title="Sort your hand by suit, then rank">Sort</button>`;
+document.body.appendChild(handBar);
+handBar.querySelector("[data-show]").addEventListener("click", () => showHand(me));
+handBar.querySelector("[data-sort]").addEventListener("click", () => sortHand(me));
+
+function placeHandBar() {
+  const hand = state.hands[me] ?? [];
+  handBar.classList.toggle("ct-on", hand.length > 0);
+  handBar.querySelector("[data-sort]").hidden = hand.length < 2;
+  if (!hand.length) return;
+  const i = state.seats.findIndex((x) => x.id === me), n = state.seats.length, a = seatAngle(i, n);
+  const r = handBar.getBoundingClientRect();
+  // your name plate's middle, on the rail
+  const rr = (FELT_R + TABLE_R) / 2;
+  const p = view.toScreen(TABLE_R + rr * Math.cos(a), TABLE_R + rr * Math.sin(a));
+  if (innerWidth < 600) {
+    // narrow: centered under your name
+    handBar.style.left = `${p.x - r.width / 2}px`; handBar.style.top = `${p.y + 22}px`;
+  } else {
+    // to the right of your name
+    handBar.style.left = `${p.x + 92}px`; handBar.style.top = `${p.y - r.height / 2}px`;
+  }
+}
+
 // ---- keyboard: acts on the card or stack under the pointer --------------------------------
 
 addEventListener("keydown", (e) => {
   if (e.key === "Escape") { closeMenu(); return; }
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z" && !e.target.closest?.("input, textarea")) {
+    e.preventDefault();
+    if (e.shiftKey) redo(); else undo();
+    return;
+  }
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "y") { e.preventDefault(); redo(); return; }
   if (e.metaKey || e.ctrlKey || e.altKey) return;
   if (e.target.closest?.("input, select, textarea")) return;
   if (drag) {
@@ -464,6 +544,7 @@ addEventListener("keydown", (e) => {
   if (k === "f") {
     if (e.repeat) return e.preventDefault();
     // a stack turns over as a whole; ⇧F turns just its top card
+    if (t.hand) return;
     if (t.whole || (isStack(t) && !e.shiftKey)) flipStack(t.pile);
     else if (t.card) flipTarget({ card: t.card });
   } else if (k === "p" && t.card && !t.hand) toggleLook(t);
@@ -486,7 +567,7 @@ startAboutDiagram();
 
 // test hook (e2e/*.spec.mjs)
 window.cardTable = {
-  get state() { return state; }, get me() { return me; }, view, dispatch, setViewer, deal, shufflePile, split,
-  reset(n = 4) { state = newTable(n); save(); setViewer(state.seats[0].id); },
+  get state() { return state; }, get me() { return me; }, view, dispatch, setViewer, deal, shufflePile, split, undo, redo, showHand,
+  reset(n = 4) { state = newTable(n); past.length = future.length = 0; save(); setViewer(state.seats[0].id); undoEl.disabled = true; },
   cardSize: [CARD_W, CARD_H],
 };

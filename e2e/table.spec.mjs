@@ -161,13 +161,12 @@ test("F over a stack turns the whole stack, again on every press", async ({ page
   let s = await state(page);
   expect(s.piles.deck.cards.at(-1)).toBe(bottom);
   expect(s.piles.deck.cards.every((id) => s.cards[id].faceUp)).toBe(true);
-  // a face-up stack fans its top five so their corners show: each turned 12° past the one below
+  // a turned-over stack lands squared up: every card at the stack's own angle
   const rots = await page.evaluate(() => {
     const st = window.cardTable.state, place = window.cardTable.view.placement(st);
-    return st.piles.deck.cards.slice(-6).map((id) => place.get(id).rot * 180 / Math.PI);
+    return st.piles.deck.cards.slice(-6).map((id) => place.get(id).rot - st.piles.deck.rot);
   });
-  for (let i = 2; i < 6; i++) expect(rots[i] - rots[i - 1]).toBeCloseTo(12, 3);
-  expect(rots[1] - rots[0]).toBeCloseTo(0, 3);
+  for (const r of rots) expect(r).toBeCloseTo(0, 5);
   // without moving the mouse: twice more
   await page.keyboard.press("f");
   await settle(page);
@@ -346,4 +345,82 @@ test("the card under the pointer lifts", async ({ page }) => {
   await expect(page.locator(cardSel(id))).toHaveClass(/ct-hover/);
   const lifted = await page.locator(`${cardSel(id)} .ct-inner`).evaluate((e) => parseFloat(e.style.translate.split(" ")[1]));
   expect(lifted).toBeLessThan(-5);
+});
+
+test("undo and redo, from the button and the keyboard", async ({ page }) => {
+  await open(page);
+  await expect(page.locator("#undo")).toBeDisabled();
+  const top = await topOf(page, "deck");
+  await dragTo(page, await center(page, cardSel(top)), await at(page, 330, 380));
+  expect((await state(page)).piles.deck.cards).toHaveLength(51);
+  await page.click("#undo");
+  await settle(page);
+  expect((await state(page)).piles.deck.cards).toHaveLength(52);
+  await page.keyboard.press("ControlOrMeta+Shift+Z");
+  expect((await state(page)).piles.deck.cards).toHaveLength(51);
+  await page.keyboard.press("ControlOrMeta+Z");
+  expect((await state(page)).piles.deck.cards).toHaveLength(52);
+});
+
+test("Show hand lays your hand face up on the table, and it's one undo", async ({ page }) => {
+  await open(page);
+  await page.evaluate(() => window.cardTable.dispatch({ type: "deal", pile: "deck", count: 4, seats: ["s0"] }));
+  await settle(page);
+  const hand = (await state(page)).hands.s0;
+  await expect(page.locator(".ct-handbar")).toBeVisible();
+  await page.locator(".ct-handbar").getByRole("button", { name: "Show hand" }).click();
+  await settle(page);
+  let s = await state(page);
+  expect(s.hands.s0).toEqual([]);
+  for (const id of hand) expect(s.cards[id].faceUp).toBe(true);
+  await expect(page.locator(".ct-handbar")).toBeHidden();
+  await page.click("#undo");
+  s = await state(page);
+  expect(s.hands.s0).toEqual(hand);
+});
+
+test("a card carried out of your hand goes down face up, or face down if flipped on the way", async ({ page }) => {
+  await open(page);
+  await page.evaluate(() => window.cardTable.dispatch({ type: "deal", pile: "deck", count: 3, seats: ["s0"] }));
+  await settle(page);
+  const [a, , c] = (await state(page)).hands.s0;
+  const last = await center(page, cardSel(c));
+  await dragTo(page, last, await at(page, 330, 380));
+  expect((await state(page)).cards[c].faceUp).toBe(true);
+  // the first card's uncovered strip; flip it while carrying
+  const b = await page.locator(cardSel(a)).boundingBox();
+  await page.mouse.move(b.x + 10, b.y + b.height * 0.35);
+  await page.mouse.down();
+  const to = await at(page, 650, 380);
+  await page.mouse.move(to.x, to.y, { steps: 8 });
+  await expect(page.locator(".ct-eye.ct-eye-open")).toHaveCount(1);
+  await page.keyboard.press("f");
+  await expect(page.locator(".ct-eye:not(.ct-eye-open)")).toHaveCount(1);
+  await page.mouse.up();
+  await settle(page);
+  const s = await state(page);
+  expect(s.cards[a].faceUp).toBe(false);
+  expect(s.hands.s0).toHaveLength(1);
+});
+
+test("Show top few heaps a stack loosely; Straighten stack squares it", async ({ page }) => {
+  await open(page);
+  const g = await center(page, ".ct-grip");
+  await page.mouse.click(g.x, g.y);
+  await page.getByRole("button", { name: "Show top few" }).click();
+  expect((await state(page)).piles.deck.messy).toBe(true);
+  await page.mouse.click(g.x, g.y);
+  await page.getByRole("button", { name: "Straighten stack" }).click();
+  expect((await state(page)).piles.deck.messy).toBe(false);
+});
+
+test("peeking puts a struck-through eye on the card", async ({ page }) => {
+  await open(page);
+  const c = await center(page, cardSel(await topOf(page, "deck")));
+  await page.mouse.click(c.x, c.y);
+  await page.getByRole("button", { name: "Peek top card" }).click();
+  await expect(page.locator(".ct-eye:not(.ct-eye-open)")).toHaveCount(1);
+  await page.mouse.click(c.x, c.y);
+  await page.getByRole("button", { name: "Stop peeking" }).click();
+  await expect(page.locator(".ct-eye")).toHaveCount(0);
 });

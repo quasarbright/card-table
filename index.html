@@ -57,8 +57,8 @@
       background: radial-gradient(circle at 50% 44%, #255c42, var(--felt) 58%, #163a29);
       box-shadow: inset 0 0 0 3px rgba(0,0,0,.28), inset 0 10px 40px rgba(0,0,0,.35);
     }
-    .ct-seats, .ct-zones, .ct-cards, .ct-grips, .ct-tags { position: absolute; left: 0; top: 0; }
-    .ct-zones { z-index: 1; } .ct-cards { z-index: 2; } .ct-grips { z-index: 3; } .ct-tags { z-index: 4; }
+    .ct-seats, .ct-zones, .ct-cards, .ct-grips, .ct-tags, .ct-eyes { position: absolute; left: 0; top: 0; }
+    .ct-zones { z-index: 1; } .ct-cards { z-index: 2; } .ct-grips { z-index: 3; } .ct-tags { z-index: 4; } .ct-eyes { z-index: 5; pointer-events: none; }
 
     .ct-card {
       position: absolute; left: 0; top: 0; width: 70px; height: 98px;
@@ -135,6 +135,15 @@
       box-shadow: 0 2px 6px rgba(0,0,0,.35);
     }
 
+    /* an eye on cards you touch: struck through while only you can see the face */
+    .ct-eye {
+      transform-origin: 0 0; position: absolute; left: 0; top: 0;
+      width: calc(22px / var(--s, 1)); height: calc(22px / var(--s, 1)); padding: calc(3.5px / var(--s, 1)); box-sizing: border-box;
+      border-radius: 50%; background: #1d1c22; color: var(--ivory);
+      box-shadow: 0 0 0 calc(1.5px / var(--s, 1)) var(--ivory), 0 2px 6px rgba(0,0,0,.4);
+    }
+    .ct-eye.ct-eye-open { background: var(--ivory); color: #1d1c22; box-shadow: 0 0 0 calc(1.5px / var(--s, 1)) #1d1c22, 0 2px 6px rgba(0,0,0,.4); }
+
     /* ---- the menu: printed on the same ivory stock as the cards, red ink for the keys ---- */
     .ct-menu {
       --ink: #1d1c22; --red: #a8322f;
@@ -192,7 +201,24 @@
       background: transparent; border: 0; border-radius: 10px; padding: 8px 14px; font-size: .9rem; font-weight: 500;
       color: var(--ivory);
     }
-    .ct-bar-btn:hover, .ct-bar about-modal > button.btn:hover { background: rgba(255,230,200,.1); }
+    .ct-bar-btn:hover:not(:disabled), .ct-bar about-modal > button.btn:hover { background: rgba(255,230,200,.1); }
+    .ct-bar-btn:disabled { opacity: .4; cursor: default; }
+    #undo { display: inline-flex; align-items: center; gap: 6px; }
+
+    /* your hand's buttons, on the rail beside your name */
+    .ct-handbar {
+      position: fixed; z-index: 6; display: none; align-items: center; gap: 2px; padding: 3px 4px 3px 9px;
+      background: linear-gradient(#4d3424, #3a2618); border-radius: 11px; font: 500 .85rem var(--font-ui);
+      box-shadow: inset 0 1px 0 rgba(255,225,190,.13), 0 6px 18px rgba(0,0,0,.4);
+    }
+    .ct-handbar.ct-on { display: flex; }
+    .ct-handbar button {
+      font: inherit; color: var(--ivory); background: transparent; border: 0; border-radius: 8px;
+      padding: 6px 10px; cursor: pointer; -webkit-tap-highlight-color: transparent;
+    }
+    .ct-handbar button:hover { background: rgba(255,230,200,.1); }
+    .ct-handbar button:focus-visible { outline: 2px solid var(--ivory); outline-offset: 1px; }
+    .ct-handbar-eye { width: 18px; height: 18px; color: rgba(242,237,224,.7); margin-right: 2px; }
     .ct-group { display: flex; align-items: center; gap: 8px; padding: 3px 6px 3px 12px; border-radius: 10px; background: rgba(0,0,0,.2); }
     .ct-label { color: rgba(242,237,224,.62); font-size: .8rem; }
     .ct-seg { display: flex; gap: 2px; }
@@ -244,6 +270,7 @@
   <div id="table"></div>
 
   <div class="control-bar ct-bar">
+    <button class="ct-bar-btn" id="undo" disabled title="Take back the last change (⌘Z or Ctrl+Z; add Shift to redo)"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>Undo</button>
     <button class="ct-bar-btn" id="gather" title="Collect every card, from the table and all hands, into one face-down deck in the middle">Gather cards</button>
     <div class="ct-group" title="How many seats are at the table. Cards in a removed seat's hand go back to the middle.">
       <span class="ct-label">Players</span>
