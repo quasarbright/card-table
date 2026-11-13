@@ -2,7 +2,7 @@
 // table size (CARD_W × CARD_H units) and scaled with the card.
 import { CARD_W as W, CARD_H as H } from "./table.mjs";
 
-export const RED = "#b3262b", BLACK = "#1d1c22", IVORY = "#f2ede0", BACK = "#a8322f";
+export const RED = "#b3262b", BLACK = "#1d1c22", IVORY = "#f4efe3", BACK = "#a8322f";
 
 // suit shapes in a 1×1 box
 const SUIT_SHAPES = {
@@ -17,8 +17,8 @@ export const suitColor = (suit) => (suit === "H" || suit === "D" ? RED : BLACK);
 export function suitDefs() {
   return `<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>` +
     Object.entries(SUIT_SHAPES).map(([s, d]) => `<symbol id="ct-suit-${s}" viewBox="0 0 1 1">${d}</symbol>`).join("") +
-    `<pattern id="ct-lattice" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">` +
-    `<rect width="8" height="8" fill="${BACK}"/><path d="M0 0H8M0 0V8" stroke="#c75a4f" stroke-width="1.4"/></pattern>` +
+    `<pattern id="ct-lattice" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">` +
+    `<rect width="6" height="6" fill="${BACK}"/><path d="M0 0H6M0 0V6" stroke="#c4554b" stroke-width=".9"/></pattern>` +
     `</defs></svg>`;
 }
 
@@ -40,34 +40,44 @@ const LAYOUTS = {
   10: [[L, 0], [R, 0], [M, 1 / 6], [L, 1 / 3], [R, 1 / 3], [L, 2 / 3], [R, 2 / 3], [M, 5 / 6], [L, 1], [R, 1]],
 };
 
+// a court card's frame is tinted toward its suit's color
+const TINT = { [RED]: "#f3ddd4", [BLACK]: "#e3e0e2" };
+const INDEX_X = 9;
+
 export function faceSVG(rank, suit) {
   const color = suitColor(suit);
+  // corner index: rank over suit, top left and (turned) bottom right
   const index = (rot) =>
     `<g${rot ? ` transform="rotate(180 ${W / 2} ${H / 2})"` : ""}>` +
-    `<text x="8.5" y="15" class="ct-index" text-anchor="middle">${rank}</text>` +
-    pip(suit, 8.5, 22, 8) + `</g>`;
+    `<text x="${INDEX_X}" y="17.5" class="ct-index${rank === "10" ? " ct-ten" : ""}" text-anchor="middle">${rank}</text>` +
+    pip(suit, INDEX_X, 25, 9) + `</g>`;
   let middle;
   if (rank === "A") {
-    middle = pip(suit, W / 2, H / 2, suit === "S" ? 30 : 24);
+    middle = pip(suit, W / 2, H / 2, suit === "S" ? 40 : 32);
   } else if (rank === "J" || rank === "Q" || rank === "K") {
-    const fx = 15, fy = 13, fw = W - 30, fh = H - 26;
+    // a two-ended monogram in a tinted frame, the way court cards read from either end
+    const fx = 18.5, fy = 9, fw = W - 37, fh = H - 18, mid = H / 2;
+    const half = `<text x="${W / 2 + 2}" y="${mid - 9}" class="ct-court" text-anchor="middle">${rank}</text>` +
+      pip(suit, fx + 6.5, fy + 7.5, 7);
     middle =
-      `<rect x="${fx}" y="${fy}" width="${fw}" height="${fh}" rx="2" fill="none" stroke="${color}" stroke-width=".8"/>` +
-      `<text x="${W / 2}" y="${H / 2 + 3}" class="ct-court" text-anchor="middle">${rank}</text>` +
-      pip(suit, W / 2, H / 2 + 18, 12) + pip(suit, W / 2, H / 2 - 23, 9, true);
+      `<rect x="${fx}" y="${fy}" width="${fw}" height="${fh}" rx="3" fill="${TINT[color]}" stroke="${color}" stroke-width=".9"/>` +
+      `<path d="M${fx + 4} ${mid}H${fx + fw - 4}" stroke="${color}" stroke-width=".6"/>` +
+      half + `<g transform="rotate(180 ${W / 2} ${mid})">${half}</g>`;
   } else {
-    const xs = { [L]: W / 2 - 12, [M]: W / 2, [R]: W / 2 + 12 };
-    const top = 18, bottom = H - 18;
-    middle = LAYOUTS[rank].map(([c, r]) => pip(suit, xs[c], top + r * (bottom - top), 11, r > .5)).join("");
+    const xs = { [L]: 24.5, [M]: W / 2, [R]: W - 24.5 };
+    const top = 19, bottom = H - 19, size = suit === "D" ? 12 : 13;
+    middle = LAYOUTS[rank].map(([c, r]) => pip(suit, xs[c], top + r * (bottom - top), size, r > .5)).join("");
   }
   return `<svg class="ct-svg" viewBox="0 0 ${W} ${H}" fill="${color}">` +
-    `<rect width="${W}" height="${H}" rx="5" fill="${IVORY}"/>` +
+    `<rect x=".25" y=".25" width="${W - .5}" height="${H - .5}" rx="5" fill="${IVORY}" stroke="rgba(0,0,0,.18)" stroke-width=".5"/>` +
     index(false) + index(true) + middle + `</svg>`;
 }
 
+// red lattice inside a double border, ivory all round
 export function backSVG() {
   return `<svg class="ct-svg" viewBox="0 0 ${W} ${H}">` +
-    `<rect width="${W}" height="${H}" rx="5" fill="${IVORY}"/>` +
-    `<rect x="4" y="4" width="${W - 8}" height="${H - 8}" rx="3" fill="url(#ct-lattice)"/>` +
+    `<rect x=".25" y=".25" width="${W - .5}" height="${H - .5}" rx="5" fill="${IVORY}" stroke="rgba(0,0,0,.18)" stroke-width=".5"/>` +
+    `<rect x="4" y="4" width="${W - 8}" height="${H - 8}" rx="3" fill="${BACK}"/>` +
+    `<rect x="7" y="7" width="${W - 14}" height="${H - 14}" rx="1.5" fill="url(#ct-lattice)" stroke="${IVORY}" stroke-width=".8"/>` +
     `</svg>`;
 }

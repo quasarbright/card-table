@@ -14,7 +14,7 @@
        The one motif: a card tips toward whoever holds or looks at it. -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Young+Serif&family=Instrument+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Young+Serif&family=Bitter:wght@700&family=Instrument+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 
   <style>
     :root {
@@ -84,8 +84,10 @@
     .ct-slot.ct-on { opacity: 1; }
     .ct-target .ct-inner { box-shadow: 0 0 0 3px var(--ivory), 0 0 18px rgba(242,237,224,.5); }
     .ct-svg { display: block; width: 100%; height: 100%; pointer-events: none; }
-    .ct-index { font: 11px var(--font-display); letter-spacing: -.06em; }
-    .ct-court { font: 30px var(--font-display); }
+    /* card indices and court letters: a sturdy bold serif with lining figures */
+    .ct-index { font: 700 15px "Bitter", Georgia, serif; }
+    .ct-index.ct-ten { font-size: 12.5px; letter-spacing: -.08em; }
+    .ct-court { font: 700 24px "Bitter", Georgia, serif; }
     .ct-turn { animation: ct-turn .22s ease-in-out; }
     @keyframes ct-turn { 50% { transform: scaleX(0); } }
     /* a whole stack: lifts, turns edge-on about its middle, comes down the other side */
@@ -208,7 +210,7 @@
 
     /* your hand's buttons, on the rail beside your name */
     .ct-handbar {
-      position: fixed; z-index: 6; display: none; align-items: center; gap: 2px; padding: 3px 4px 3px 9px;
+      position: fixed; z-index: 6; display: none; align-items: center; gap: 2px; padding: 3px 4px;
       background: linear-gradient(#4d3424, #3a2618); border-radius: 11px; font: 500 .85rem var(--font-ui);
       box-shadow: inset 0 1px 0 rgba(255,225,190,.13), 0 6px 18px rgba(0,0,0,.4);
     }
@@ -219,7 +221,6 @@
     }
     .ct-handbar button:hover { background: rgba(255,230,200,.1); }
     .ct-handbar button:focus-visible { outline: 2px solid var(--ivory); outline-offset: 1px; }
-    .ct-handbar-eye { width: 18px; height: 18px; color: rgba(242,237,224,.7); margin-right: 2px; }
     .ct-group { display: flex; align-items: center; gap: 8px; padding: 3px 6px 3px 12px; border-radius: 10px; background: rgba(0,0,0,.2); }
     .ct-label { color: rgba(242,237,224,.62); font-size: .8rem; }
     .ct-seg { display: flex; gap: 2px; }

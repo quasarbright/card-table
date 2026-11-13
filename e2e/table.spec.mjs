@@ -13,7 +13,8 @@ async function open(page) {
   await settle(page);
   return errors;
 }
-const settle = (page) => page.waitForTimeout(450);
+// long enough for the cards' springs to come to rest
+const settle = (page) => page.waitForTimeout(650);
 const state = (page) => page.evaluate(() => window.cardTable.state);
 const topOf = async (page, pile) => (await state(page)).piles[pile].cards.at(-1);
 
@@ -26,7 +27,9 @@ async function dragTo(page, from, to) {
   await page.mouse.move(from.x, from.y);
   await page.mouse.down();
   await page.mouse.move(from.x + 10, from.y + 10, { steps: 2 });
-  await page.mouse.move(to.x, to.y, { steps: 8 });
+  await page.mouse.move(to.x, to.y, { steps: 12 });
+  // let the last move land before letting go (Firefox under load can lag a frame)
+  await page.waitForTimeout(80);
   await page.mouse.up();
   await settle(page);
 }
@@ -397,11 +400,11 @@ test("carried over another hand a card is hidden until flipped for them; droppin
   await page.mouse.move(p2.x, p2.y, { steps: 12 });
   await page.waitForTimeout(300);
   expect(await showsFace(page, id)).toBe(false);
-  await expect(page.locator(".ct-eye:not(.ct-eye-open)")).toHaveCount(1);
+  await expect(page.locator(".ct-eye:not(.ct-eye-open):not(.ct-zone-eye)")).toHaveCount(1);
   await page.keyboard.press("f");
-  await expect(page.locator(".ct-eye.ct-eye-them")).toHaveCount(1);
+  await expect(page.locator(".ct-eye.ct-eye-them:not(.ct-zone-eye)")).toHaveCount(1);
   await page.keyboard.press("f");
-  await expect(page.locator(".ct-eye.ct-eye-them")).toHaveCount(0);
+  await expect(page.locator(".ct-eye.ct-eye-them:not(.ct-zone-eye)")).toHaveCount(0);
   await page.mouse.up();
   await settle(page);
   expect((await state(page)).hands.s1).toEqual([id]);
@@ -421,9 +424,9 @@ test("a card carried out of your hand goes down face up, or face down if flipped
   await page.mouse.down();
   const to = await at(page, 650, 380);
   await page.mouse.move(to.x, to.y, { steps: 8 });
-  await expect(page.locator(".ct-eye.ct-eye-open")).toHaveCount(1);
+  await expect(page.locator(".ct-eye.ct-eye-open:not(.ct-zone-eye)")).toHaveCount(1);
   await page.keyboard.press("f");
-  await expect(page.locator(".ct-eye:not(.ct-eye-open)")).toHaveCount(1);
+  await expect(page.locator(".ct-eye:not(.ct-eye-open):not(.ct-zone-eye)")).toHaveCount(1);
   await page.mouse.up();
   await settle(page);
   const s = await state(page);
@@ -447,8 +450,8 @@ test("peeking puts a struck-through eye on the card", async ({ page }) => {
   const c = await center(page, cardSel(await topOf(page, "deck")));
   await page.mouse.click(c.x, c.y);
   await page.getByRole("button", { name: "Peek top card" }).click();
-  await expect(page.locator(".ct-eye:not(.ct-eye-open)")).toHaveCount(1);
+  await expect(page.locator(".ct-eye:not(.ct-eye-open):not(.ct-zone-eye)")).toHaveCount(1);
   await page.mouse.click(c.x, c.y);
   await page.getByRole("button", { name: "Stop peeking" }).click();
-  await expect(page.locator(".ct-eye")).toHaveCount(0);
+  await expect(page.locator(".ct-eye:not(.ct-zone-eye)")).toHaveCount(0);
 });

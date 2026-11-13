@@ -2,7 +2,7 @@
 // (see table.mjs), which are applied and drawn. Everything here is local for now; the
 // actions are already the messages a shared table would send.
 import { newTable, apply, shuffledOrder, locate, handCenter, seatAngle, MAX_SEATS, RANKS, SUITS, CARD_W, CARD_H, TABLE_R, FELT_R } from "./table.mjs";
-import { createView, HAND_R, OWN_HAND_R, OWN_HAND_SCALE, GRIP_REACH, handGap, eyeSVG } from "./view.mjs";
+import { createView, HAND_R, OWN_HAND_R, GRIP_REACH, handGap, handReach } from "./view.mjs";
 import { suitDefs } from "./faces.mjs";
 import { startAboutDiagram } from "./about.mjs";
 
@@ -168,12 +168,13 @@ function dropTarget(x, y) {
     const c = handCenter(i, n, own ? OWN_HAND_R : HAND_R), a = seatAngle(i, n);
     const right = { x: Math.sin(a), y: -Math.cos(a) }, out = { x: Math.cos(a), y: Math.sin(a) };
     const along = (x - c.x) * right.x + (y - c.y) * right.y, across = (x - c.x) * out.x + (y - c.y) * out.y;
-    if (Math.abs(along) > (own ? 150 : 115) || Math.abs(across) > (own ? 75 : 60)) continue;
     const hand = state.hands[seat.id], rest = hand.filter((id) => !carried.has(id));
+    const shown = !!state.shownHands?.[seat.id];
+    const reach = handReach(own, rest.length + 1, shown);
+    if (Math.abs(along) > reach.along || Math.abs(across) > reach.across) continue;
     // each card in the closed-up hand shows its left strip (the next card covers the rest);
     // the pointer goes after every card whose strip middle it's past
-    const shown = !!state.shownHands?.[seat.id];
-    const r = rest.length, gap = handGap(own, r, shown), halfW = (CARD_W / 2) * (own && !shown ? OWN_HAND_SCALE : 1);
+    const r = rest.length, gap = handGap(own, r, shown), halfW = CARD_W / 2;
     let slot = 0;
     for (let j = 0; j < r; j++) if ((j - (r - 1) / 2) * gap - halfW + gap / 2 < along) slot = j + 1;
     const index = slot < rest.length ? hand.indexOf(rest[slot]) : hand.length;
@@ -491,7 +492,6 @@ function split(pileId, n) {
 const handBar = document.createElement("div");
 handBar.className = "ct-handbar";
 handBar.innerHTML = `
-  <span class="ct-handbar-eye"></span>
   <button data-show></button>
   <button data-sort title="Sort your hand by suit, then rank">Sort</button>`;
 document.body.appendChild(handBar);
@@ -504,9 +504,7 @@ function placeHandBar() {
   handBar.querySelector("[data-sort]").hidden = hand.length < 2;
   if (!hand.length) return;
   const shown = !!state.shownHands?.[me];
-  const eye = handBar.querySelector(".ct-handbar-eye"), btn = handBar.querySelector("[data-show]");
-  eye.innerHTML = eyeSVG(shown);
-  eye.title = shown ? "Everyone can see your hand" : "Only you can see your hand";
+  const btn = handBar.querySelector("[data-show]");
   btn.textContent = shown ? "Hide hand" : "Show hand";
   btn.title = shown ? "Pick your hand back up, so only you see it" : "Lay your hand flat and face up, so everyone sees it. It stays your hand.";
   const i = state.seats.findIndex((x) => x.id === me), n = state.seats.length, a = seatAngle(i, n);

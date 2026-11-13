@@ -8,7 +8,6 @@ import { faceSVG, backSVG } from "./faces.mjs";
 const DEG = 180 / Math.PI;
 export const HAND_R = FELT_R - 62;          // where other seats' hands sit
 export const OWN_HAND_R = FELT_R - 66;      // the viewer's own hand, a bit closer to them and bigger
-export const OWN_HAND_SCALE = 1.3;
 export const GRIP_REACH = CARD_H / 2 + 17; // from a stack's middle to its count tab
 const HELD_TILT = 38, LOOK_TILT = 28; // degrees: a held card, a face-down card being looked at
 const TURN_MS = 220, STACK_TURN_MS = 460;
@@ -23,9 +22,15 @@ function jitter(id, salt) {
 
 // spacing between neighbors in a hand of k cards
 export function handGap(own, k, shown = false) {
-  // a shown hand lies flat with every card readable; a held one overlaps
-  if (shown) return Math.min(own ? 46 : 38, (own ? 480 : 300) / Math.max(1, k - 1));
-  return Math.min(own ? 30 : 20, (own ? 420 : 260) / Math.max(1, k - 1));
+  // your own hand, held or shown, is spaced so every card is easy to pick out and drop
+  // between; other held hands bunch up more
+  if (own || shown) return Math.min(own ? 46 : 38, (own ? 480 : 300) / Math.max(1, k - 1));
+  return Math.min(20, 260 / Math.max(1, k - 1));
+}
+// how far along and across from a hand's middle it still takes drops
+export function handReach(own, k, shown = false) {
+  const along = Math.max(0, k - 1) * handGap(own, k, shown) / 2 + CARD_W / 2 + 22;
+  return { along: Math.max(own ? 150 : 115, along), across: own ? 75 : 60 };
 }
 
 export function createView(root, { viewer = "s0", interactive = true } = {}) {
@@ -39,6 +44,7 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
   const gripLayer = el("div", "ct-grips", stage);
   const tagLayer = el("div", "ct-tags", stage);
   const eyeLayer = el("div", "ct-eyes", stage);
+  const zoneEyeLayer = el("div", "ct-eyes", stage);
   const slotEl = el("div", "ct-slot", cardLayer); // the gap a carried card would drop into
   stage.style.width = stage.style.height = `${2 * TABLE_R}px`;
 
@@ -161,14 +167,15 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
   // (shown: laid flat in a straight row at table size instead)
   function handSlot(si, n, own, i, k, aside = 0, shown = false) {
     const a = seatAngle(si, n);
-    const hc = handCenter(si, n, (own ? OWN_HAND_R : HAND_R) - (shown ? 24 : 0));
+    // a shown hand slides toward the middle so its cards' tops stick out of the hand's area
+    const hc = handCenter(si, n, (own ? OWN_HAND_R : HAND_R) - (shown ? handReach(own, k).across + 22 - CARD_H / 2 : 0));
     const t = i - (k - 1) / 2;
     const along = t * handGap(own, k, shown) + aside * (own ? 26 : 18);
     const fan = shown ? 0 : t * Math.min(4, 40 / Math.max(1, k)) / DEG;
     const arc = shown ? 0 : t * t * 0.35;
     return {
       x: hc.x + Math.sin(a) * along + Math.cos(a) * arc, y: hc.y - Math.cos(a) * along + Math.sin(a) * arc,
-      rot: a - Math.PI / 2 + fan, scale: own && !shown ? OWN_HAND_SCALE : 1,
+      rot: a - Math.PI / 2 + fan, scale: 1,
     };
   }
 
@@ -395,9 +402,11 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
     }
   }
 
-  // while carrying cards: where each hand would take them, and the gap they'd fill
+  // each hand's area, always drawn (it lights up while you carry cards into it), and the gap
+  // carried cards would fill
   function renderZones(st, place, o) {
     zoneLayer.replaceChildren();
+    zoneEyeLayer.replaceChildren();
     const was = slotEl.classList.contains("ct-on");
     slotEl.classList.toggle("ct-on", !!place.slot);
     if (place.slot) {
@@ -407,7 +416,6 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
       slotEl.style.zIndex = q.z;
       slotEl.style.transform = `translate(${q.x - CARD_W / 2}px, ${q.y - CARD_H / 2}px) rotate(${q.rot * DEG}deg) scale(${q.scale})`;
     }
-    if (!o.drag || o.drag.inHand) return;
     const n = st.seats.length;
     st.seats.forEach((seat, i) => {
       const own = seat.id === viewer;
@@ -416,8 +424,19 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
       z.style.setProperty("--seat", seat.color);
       const a = seatAngle(i, n);
       z.style.transform = `translate(${c.x}px, ${c.y}px) rotate(${(a - Math.PI / 2) * DEG}deg) translate(-50%, -50%)`;
-      z.style.width = `${own ? 300 : 230}px`; z.style.height = `${own ? 150 : 120}px`;
+      const reach = handReach(own, st.hands[seat.id].length + 1, !!st.shownHands?.[seat.id]);
+      z.style.width = `${2 * reach.along}px`; z.style.height = `${2 * reach.across}px`;
       z.classList.toggle("ct-target", o.target?.hand === seat.id);
+      // who can see this hand: an eye on the area's inner corner, to the right as its owner sits
+      if (!st.hands[seat.id].length) return;
+      const shown = !!st.shownHands?.[seat.id];
+      const right = { x: Math.sin(a), y: -Math.cos(a) }, outward = { x: Math.cos(a), y: Math.sin(a) };
+      const ex = c.x + right.x * reach.along - outward.x * reach.across, ey = c.y + right.y * reach.along - outward.y * reach.across;
+      const eye = el("div", "ct-eye ct-zone-eye", zoneEyeLayer);
+      eye.innerHTML = eyeSVG(shown);
+      eye.classList.toggle("ct-eye-open", shown);
+      eye.title = shown ? "Everyone can see this hand" : own ? "Only you can see your hand" : `Only ${seat.name} can see this hand`;
+      eye.style.transform = `translate(${ex}px, ${ey}px) rotate(${-frame.rot * DEG}deg) translate(-50%, -50%)`;
     });
   }
 
