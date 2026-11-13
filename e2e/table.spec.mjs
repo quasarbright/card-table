@@ -1,0 +1,189 @@
+// Real mouse and keyboard input on the table, checked against the table state.
+import { test, expect } from "@playwright/test";
+import { serveFromCache } from "./helpers.mjs";
+
+async function open(page) {
+  const errors = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  page.on("console", (m) => { if (m.type() === "error" && !/net::ERR_FAILED/.test(m.text())) errors.push(m.text()); });
+  await page.route((url) => url.hostname !== "localhost", serveFromCache);
+  await page.goto("/index.html");
+  await page.waitForFunction(() => !!window.cardTable);
+  await page.evaluate(() => window.cardTable.reset(4));
+  await settle(page);
+  return errors;
+}
+const settle = (page) => page.waitForTimeout(450);
+const state = (page) => page.evaluate(() => window.cardTable.state);
+const topOf = async (page, pile) => (await state(page)).piles[pile].cards.at(-1);
+
+async function center(page, sel) {
+  const b = await page.locator(sel).boundingBox();
+  return { x: b.x + b.width / 2, y: b.y + b.height / 2 };
+}
+const cardSel = (id) => `.ct-card[data-id="${id}"]`;
+async function dragTo(page, from, to) {
+  await page.mouse.move(from.x, from.y);
+  await page.mouse.down();
+  await page.mouse.move(from.x + 10, from.y + 10, { steps: 2 });
+  await page.mouse.move(to.x, to.y, { steps: 8 });
+  await page.mouse.up();
+  await settle(page);
+}
+// a point on the table, in screen coordinates
+const at = (page, x, y) => page.evaluate(([x, y]) => window.cardTable.view.toScreen(x, y), [x, y]);
+const showsFace = (page, id) => page.locator(`${cardSel(id)} .ct-index`).count().then((n) => n > 0);
+
+test("drag the top card off the deck, then double-click to flip it", async ({ page }) => {
+  const errors = await open(page);
+  const top = await topOf(page, "deck");
+  await dragTo(page, await center(page, cardSel(top)), await at(page, 300, 350));
+  let s = await state(page);
+  expect(s.piles.deck.cards.length).toBe(51);
+  const pile = Object.values(s.piles).find((p) => p.cards.includes(top));
+  expect(pile.id).not.toBe("deck");
+  expect(Math.hypot(pile.x - 300, pile.y - 350)).toBeLessThan(15);
+  expect(await showsFace(page, top)).toBe(false);
+
+  await page.mouse.dblclick(...Object.values(await center(page, cardSel(top))));
+  await settle(page);
+  expect((await state(page)).cards[top].faceUp).toBe(true);
+  expect(await showsFace(page, top)).toBe(true);
+
+  // and back onto the deck
+  await dragTo(page, await center(page, cardSel(top)), await center(page, ".ct-grip"));
+  s = await state(page);
+  expect(s.piles.deck.cards.at(-1)).toBe(top);
+  expect(Object.keys(s.piles)).toEqual(["deck"]);
+  expect(errors).toEqual([]);
+});
+
+test("a card dragged into your hand shows you its face and others its back", async ({ page }) => {
+  const errors = await open(page);
+  const top = await topOf(page, "deck");
+  await dragTo(page, await center(page, cardSel(top)), await at(page, 500, 870));
+  expect((await state(page)).hands.s0).toEqual([top]);
+  expect(await showsFace(page, top)).toBe(true);
+  await page.selectOption("#viewer", "s1");
+  await page.waitForTimeout(700);
+  expect(await showsFace(page, top)).toBe(false);
+  // pass it to Player 3's hand, as Player 2
+  const p3 = await page.evaluate(() => { const v = window.cardTable.view; return v.toScreen(500, 500 - 378); });
+  await dragTo(page, await center(page, cardSel(top)), p3);
+  expect((await state(page)).hands.s2).toEqual([top]);
+  expect(errors).toEqual([]);
+});
+
+test("reorder your hand by dragging a card along it", async ({ page }) => {
+  await open(page);
+  await page.evaluate(() => window.cardTable.dispatch({ type: "deal", pile: "deck", count: 4, seats: ["s0"] }));
+  await settle(page);
+  const before = (await state(page)).hands.s0;
+  // the first card is mostly covered by the next one: press its uncovered left edge, up high
+  // where the tilt makes the card widest
+  const b = await page.locator(cardSel(before[0])).boundingBox();
+  const press = { x: b.x + 12, y: b.y + b.height * 0.3 };
+  expect(await page.evaluate(([x, y]) => document.elementFromPoint(x, y)?.closest(".ct-card")?.dataset.id, [press.x, press.y])).toBe(before[0]);
+  const last = await center(page, cardSel(before[3]));
+  await dragTo(page, press, { x: last.x + 30, y: last.y });
+  const after = (await state(page)).hands.s0;
+  expect(after).toEqual([before[1], before[2], before[3], before[0]]);
+});
+
+test("deal from the menu: right-click the stack's count, Deal…, one more, Deal", async ({ page }) => {
+  const errors = await open(page);
+  const g = await center(page, ".ct-grip");
+  await page.mouse.click(g.x, g.y, { button: "right" });
+  await page.getByRole("button", { name: /Deal…/ }).click();
+  await expect(page.locator(".ct-count")).toHaveText("5");
+  await page.locator('.ct-step[data-d="1"]').click();
+  await page.locator(".ct-menu [data-deal]").click();
+  await page.waitForTimeout(6 * 4 * 70 + 600);
+  const s = await state(page);
+  for (const seat of ["s0", "s1", "s2", "s3"]) expect(s.hands[seat].length).toBe(6);
+  expect(s.piles.deck.cards.length).toBe(52 - 24);
+  // the first card goes to the player after you
+  expect(s.hands.s1[0]).toBe("AS");
+  expect(errors).toEqual([]);
+});
+
+test("keys act on what's under the pointer: S shuffles, P looks, F flips", async ({ page }) => {
+  await open(page);
+  const before = (await state(page)).piles.deck.cards.join();
+  const top = await topOf(page, "deck");
+  const c = await center(page, cardSel(top));
+  await page.mouse.move(c.x, c.y);
+  await page.mouse.move(c.x + 1, c.y);
+  await page.keyboard.press("s");
+  await settle(page);
+  expect((await state(page)).piles.deck.cards.join()).not.toBe(before);
+
+  const newTop = await topOf(page, "deck");
+  await page.mouse.move(c.x, c.y + 1);
+  await page.keyboard.press("p");
+  await settle(page);
+  expect((await state(page)).cards[newTop].privateTo).toBe("s0");
+  expect(await showsFace(page, newTop)).toBe(true);
+  await expect(page.locator(cardSel(newTop))).toHaveClass(/ct-ringed/);
+  await page.selectOption("#viewer", "s1");
+  await page.waitForTimeout(700);
+  expect(await showsFace(page, newTop)).toBe(false);
+  await page.selectOption("#viewer", "s0");
+  await page.waitForTimeout(700);
+
+  const c2 = await center(page, cardSel(newTop));
+  await page.mouse.move(c2.x, c2.y);
+  await page.mouse.move(c2.x + 1, c2.y);
+  await page.keyboard.press("f");
+  await settle(page);
+  const s = await state(page);
+  expect(s.cards[newTop].faceUp).toBe(true);
+  expect(s.cards[newTop].privateTo).toBe(null);
+});
+
+test("dragging the count moves the whole stack", async ({ page }) => {
+  await open(page);
+  await dragTo(page, await center(page, ".ct-grip"), await at(page, 650, 400));
+  const s = await state(page);
+  expect(s.piles.deck.cards.length).toBe(52);
+  expect(Math.hypot(s.piles.deck.x - 650, s.piles.deck.y - 400)).toBeLessThan(80);
+});
+
+test("the table survives a reload; gather brings everything back", async ({ page }) => {
+  await open(page);
+  await page.evaluate(() => window.cardTable.deal("deck", 3));
+  await page.reload();
+  await page.waitForFunction(() => !!window.cardTable);
+  expect((await state(page)).hands.s1.length).toBe(3);
+  await page.click("#gather");
+  const s = await state(page);
+  expect(Object.values(s.piles)).toHaveLength(1);
+  expect(Object.values(s.piles)[0].cards).toHaveLength(52);
+});
+
+test("fewer players: removed hands go back to the middle", async ({ page }) => {
+  await open(page);
+  await page.evaluate(() => window.cardTable.deal("deck", 2));
+  await page.selectOption("#players", "2");
+  await settle(page);
+  const s = await state(page);
+  expect(s.seats).toHaveLength(2);
+  expect(await page.locator(".ct-plate").count()).toBe(2);
+  expect(Object.values(s.piles).reduce((n, p) => n + p.cards.length, 0)).toBe(52 - 4);
+});
+
+test("the about modal draws the same table from two seats", async ({ page }) => {
+  const errors = await open(page);
+  await page.getByRole("button", { name: "about" }).click();
+  const minis = page.locator(".cohesion-about .ct-mini");
+  await expect(minis).toHaveCount(2);
+  await page.waitForTimeout(2600);
+  expect(await minis.nth(0).locator(".ct-card").count()).toBe(52);
+  // Player 1 sees their own hand's faces; Player 2 sees theirs
+  const faces = await page.evaluate(() => [...document.querySelectorAll(".cohesion-about .ct-mini")].map((m) => m.querySelectorAll(".ct-index").length));
+  expect(faces[0]).toBeGreaterThan(0);
+  expect(faces[1]).toBeGreaterThan(0);
+  await expect(page.locator("#ct-about-caption")).not.toHaveText("");
+  await page.keyboard.press("Escape");
+  expect(errors).toEqual([]);
+});

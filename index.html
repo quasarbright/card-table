@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Card Table</title>
+
+  <link rel="stylesheet" href="https://quasarbright.github.io/sketches/shared/cohesion.css" />
+  <script type="module" src="https://quasarbright.github.io/sketches/shared/cohesion.js"></script>
+
+  <!-- identity: a card table. Green felt, a walnut rail, ivory cards with red lattice backs.
+       Young Serif for the title and card indices, Instrument Sans for the UI, JetBrains Mono
+       for stack counts. The one motif: a card tips toward whoever holds or looks at it. -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Young+Serif&family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+
+  <style>
+    :root {
+      --bg:        #0d1612;  /* the room around the table */
+      --panel:     #15211b;
+      --panel-2:   #1d2c25;
+      --border:    #2c3f35;
+      --text:      #ece7da;
+      --muted:     #9aa69e;
+      --faint:     #66736b;
+      --accent:    #c9483f;  /* card-back red, lifted for contrast on the dark room */
+      --accent-hi: #dd5d52;
+      --on-accent: #f2ede0;
+      --font-ui: "Instrument Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+      --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+      --font-display: "Young Serif", Georgia, serif;
+      --felt: #1d4a35;
+      --walnut: #3b2719;
+      --ivory: #f2ede0;
+    }
+    html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--text); font-family: var(--font-ui); }
+
+    /* ---- header ---- */
+    .ct-head { position: fixed; top: 14px; left: 20px; z-index: 6; pointer-events: none; max-width: min(340px, 60vw); }
+    .ct-head h1 { font-family: var(--font-display); font-weight: 400; font-size: 1.7rem; margin: 0; letter-spacing: .01em; }
+    .ct-hint { margin: 4px 0 0; color: var(--muted); font-size: .85rem; line-height: 1.4; }
+
+    /* ---- the table ---- */
+    #table { position: fixed; inset: 0; touch-action: none; user-select: none; -webkit-user-select: none; }
+    .ct-view { position: relative; overflow: hidden; }
+    .ct-stage { position: absolute; left: 0; top: 0; transform-origin: 0 0; transition: transform .6s cubic-bezier(.3,.7,.2,1); }
+    .ct-stage.ct-still { transition: none; }
+    .ct-rail {
+      position: absolute; inset: 0; border-radius: 50%;
+      background: radial-gradient(circle, #4a3221 82%, #3b2719 88%, #2a1b11 100%);
+      box-shadow: 0 30px 90px rgba(0,0,0,.55), inset 0 2px 0 rgba(255,235,200,.08);
+    }
+    .ct-felt {
+      position: absolute; left: 60px; top: 60px; width: 880px; height: 880px; border-radius: 50%;
+      background: radial-gradient(circle at 50% 44%, #255c42, var(--felt) 58%, #163a29);
+      box-shadow: inset 0 0 0 3px rgba(0,0,0,.28), inset 0 10px 40px rgba(0,0,0,.35);
+    }
+    .ct-seats, .ct-zones, .ct-cards, .ct-grips, .ct-tags { position: absolute; left: 0; top: 0; }
+    .ct-zones { z-index: 1; } .ct-cards { z-index: 2; } .ct-grips { z-index: 3; } .ct-tags { z-index: 4; }
+
+    .ct-card {
+      position: absolute; left: 0; top: 0; width: 70px; height: 98px;
+      transform-origin: 50% 50%; cursor: grab;
+      transition: transform .34s cubic-bezier(.2,.8,.2,1);
+    }
+    .ct-card.ct-carried { transition: none; cursor: grabbing; }
+    .ct-inner {
+      width: 100%; height: 100%; border-radius: 5px;
+      box-shadow: 0 1px 1.5px rgba(0,0,0,.45), 0 0 0 .5px rgba(0,0,0,.35);
+      transition: box-shadow .15s;
+    }
+    .ct-ringed .ct-inner { box-shadow: 0 0 0 2.5px var(--ring), 0 1px 1.5px rgba(0,0,0,.45); }
+    .ct-touched .ct-inner { box-shadow: 0 0 0 2.5px var(--ring), 0 0 16px var(--ring), 0 1px 2px rgba(0,0,0,.45); }
+    .ct-lifted .ct-inner { box-shadow: 0 0 0 2.5px var(--ring), 0 16px 26px rgba(0,0,0,.5); }
+    .ct-target .ct-inner { box-shadow: 0 0 0 3px var(--ivory), 0 0 18px rgba(242,237,224,.5); }
+    .ct-svg { display: block; width: 100%; height: 100%; pointer-events: none; }
+    .ct-index { font: 11px var(--font-display); letter-spacing: -.06em; }
+    .ct-court { font: 30px var(--font-display); }
+    .ct-turn { animation: ct-turn .22s ease-in-out; }
+    @keyframes ct-turn { 50% { transform: scaleX(0); } }
+    .ct-riffle { animation: ct-riffle .32s ease-in-out; }
+    @keyframes ct-riffle { 25% { translate: -5px 0; } 50% { translate: 5px 0; } 75% { translate: -3px 0; } }
+
+    /* name plates on the rail; sizes divide by the table's scale so text stays readable */
+    .ct-plate {
+      transform-origin: 0 0;
+      position: absolute; left: 0; top: 0; white-space: nowrap;
+      font-size: calc(12.5px / var(--s, 1)); font-weight: 500;
+      padding: .2em .75em .2em .6em; border-radius: 999px;
+      background: rgba(20,12,7,.55); border: calc(1px / var(--s, 1)) solid color-mix(in srgb, var(--seat) 55%, transparent);
+      color: var(--text);
+    }
+    .ct-plate::before { content: ""; display: inline-block; width: .6em; height: .6em; border-radius: 50%; background: var(--seat); margin-right: .45em; vertical-align: .05em; }
+    .ct-plate.ct-me { border-color: var(--seat); }
+
+    .ct-grip {
+      transform-origin: 0 0;
+      position: absolute; left: 0; top: 0; cursor: grab;
+      font: 500 calc(11px / var(--s, 1)) var(--font-mono); color: var(--text);
+      padding: .15em .7em; border-radius: 999px;
+      background: rgba(10,20,15,.72); border: calc(1px / var(--s, 1)) solid rgba(242,237,224,.18);
+    }
+    .ct-grip:hover { border-color: rgba(242,237,224,.5); }
+    .ct-grip.ct-target { border-color: var(--ivory); background: rgba(242,237,224,.18); }
+    .ct-grip.ct-carried { cursor: grabbing; }
+
+    .ct-zone {
+      transform-origin: 0 0;
+      position: absolute; left: 0; top: 0; border-radius: 22px;
+      border: 2px dashed color-mix(in srgb, var(--seat) 55%, transparent);
+      background: color-mix(in srgb, var(--seat) 6%, transparent);
+    }
+    .ct-zone.ct-target { background: color-mix(in srgb, var(--seat) 20%, transparent); border-style: solid; }
+
+    .ct-tag {
+      transform-origin: 0 0;
+      position: absolute; left: 0; top: 0; white-space: nowrap; pointer-events: none;
+      font: 600 calc(11.5px / var(--s, 1)) var(--font-ui); color: #15110c;
+      padding: .1em .55em; border-radius: .35em; background: var(--seat);
+      box-shadow: 0 2px 6px rgba(0,0,0,.35);
+    }
+
+    /* ---- right-click menu ---- */
+    .ct-menu {
+      position: fixed; z-index: 20; min-width: 200px; padding: 5px;
+      background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+      box-shadow: 0 14px 40px rgba(0,0,0,.5); font-size: .9rem;
+    }
+    .ct-menu button.ct-item {
+      display: flex; width: 100%; justify-content: space-between; gap: 18px; align-items: baseline;
+      background: none; border: 0; color: var(--text); font: inherit; text-align: left;
+      padding: 7px 10px; border-radius: 6px; cursor: pointer;
+    }
+    .ct-menu button.ct-item:hover, .ct-menu button.ct-item:focus-visible { background: var(--panel-2); outline: none; }
+    .ct-menu kbd { font: 500 .78rem var(--font-mono); color: var(--muted); }
+    .ct-menu hr { border: 0; border-top: 1px solid var(--border); margin: 4px 6px; }
+    .ct-deal { padding: 8px 10px 6px; }
+    .ct-deal-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+    .ct-deal-row .ct-count { font: 500 1.1rem var(--font-mono); min-width: 2.2ch; text-align: center; }
+    .ct-step { width: 32px; height: 32px; padding: 0; }
+    .ct-deal .btn-primary { margin-left: auto; }
+
+    /* ---- bottom bar ---- */
+    .control-bar { font-family: var(--font-ui); flex-wrap: wrap; justify-content: center; width: max-content; max-width: calc(100vw - 24px); }
+    .control-bar select { width: auto; padding: 6px 8px; font: inherit; font-size: .85rem; }
+    .ct-label { color: var(--muted); font-size: .8rem; margin-left: 6px; }
+
+    /* ---- about modal ---- */
+    .ct-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 14px 0 4px; }
+    .ct-pair figure { margin: 0; }
+    .ct-mini { width: 100%; aspect-ratio: 1; }
+    .ct-pair figcaption { text-align: center; color: var(--muted); font-size: .8rem; margin-top: 4px; }
+    .ct-caption { text-align: center; color: var(--text); font-size: .85rem; min-height: 1.4em; margin: 2px 0 12px; }
+
+    @media (max-width: 600px) {
+      .ct-head { top: 10px; left: 14px; }
+      .ct-head h1 { font-size: 1.3rem; }
+      .ct-hint { font-size: .78rem; }
+      .control-bar { bottom: 34px; }
+      .ct-label { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="ct-head">
+    <h1>Card Table</h1>
+    <p class="ct-hint" id="hint">Drag cards anywhere. Double-click to flip one. Right-click a card or a stack's count for shuffle, deal and the rest.</p>
+  </div>
+
+  <div id="table"></div>
+
+  <div class="control-bar">
+    <button class="btn" id="gather" title="Collect every card, from the table and all hands, into one face-down deck in the middle">gather cards</button>
+    <span class="ct-label">players</span>
+    <select id="players" title="How many seats are at the table. Cards in a removed seat's hand go back to the middle."></select>
+    <span class="ct-label">view as</span>
+    <select id="viewer" title="Sit in another seat to see the table the way that player does: their hand, the cards only they can see."></select>
+    <about-modal label="about">
+      <h2 class="title">Card Table</h2>
+      <p class="intro">A table and a deck of cards with no game built in. You do with the cards what you'd do at a real table, and the rules stay with the players.</p>
+
+      <div class="section-label">What the table knows</div>
+      <p>Every card is somewhere: in a stack on the table, or in someone's hand. A loose card is a stack of one. On top of that, each card is either face up or face down, and a face-down card can be seen by one player who is looking at it.</p>
+      <p>That's enough for most card games. Solitaire is stacks and spreads. Poker is hands, a deck, and face-up cards in the middle. Hearts is dealing and passing cards between hands. None of those rules live here.</p>
+
+      <div class="section-label">Who sees what</div>
+      <p>Each player sees a different table. Face-up cards look the same to everyone. A card in your hand shows its face to you and its back to everyone else. A face-down card someone is looking at shows its face only to that player.</p>
+      <p>A card that only one player can see tips up toward that player, the way you'd lift a card off the table to look at it. Everyone can tell who is looking at what, even when they can't see the card.</p>
+      <div class="ct-pair">
+        <figure><div class="ct-mini" data-seat="s0"></div><figcaption>what Player 1 sees</figcaption></figure>
+        <figure><div class="ct-mini" data-seat="s1"></div><figcaption>what Player 2 sees</figcaption></figure>
+      </div>
+      <p class="ct-caption" id="ct-about-caption"></p>
+      <p>Both pictures are drawn from the same table by the same code the main page uses, once per seat. You can try it yourself with <b>view as</b> at the bottom of the page.</p>
+
+      <div class="section-label">Sharing a table</div>
+      <p>Every change to the table is a small message: move these cards there, flip this one, shuffle that stack into this order. Applying the same messages in the same order always gives the same table. A shuffle picks its new order before the message is sent, so the message carries the result rather than the dice roll. That's what will let several players share one table later: each browser applies everyone's messages and they all end up in the same place.</p>
+    </about-modal>
+  </div>
+
+  <mike-footer overlay></mike-footer>
+
+  <script type="module" src="main.mjs"></script>
+</body>
+</html>
