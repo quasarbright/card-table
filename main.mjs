@@ -2,7 +2,7 @@
 // actions (see table.mjs). A session (sync.mjs) applies them and keeps every player's table the
 // same; while you drag, where your cards are is streamed to everyone else as it happens.
 import { newTable, apply, shuffledOrder, locate, handCenter, seatAngle, MAX_SEATS, RANKS, SUITS, CARD_W, CARD_H, TABLE_R, FELT_R } from "./table.mjs";
-import { createView, HAND_R, OWN_HAND_R, GRIP_REACH, handGap, handReach } from "./view.mjs";
+import { createView, HAND_R, OWN_HAND_R, GRIP_REACH, handGap, handReach, spreadGap } from "./view.mjs";
 import { suitDefs } from "./faces.mjs";
 import { startAboutDiagram } from "./about.mjs";
 import { connect } from "./net.mjs";
@@ -34,6 +34,8 @@ let drag = null;      // what's being carried
 let pending = null;   // a press that hasn't become a drag yet
 let hovered = null;   // { card } or { pile }: what keyboard shortcuts act on, and what lifts
 let menu = null;
+const peeking = new Set(); // stacks you're looking through: spread, faces up, on your screen only
+const peekers = new Map(); // seat → the stacks another player is looking through
 
 // ---- the session ---------------------------------------------------------------------------
 
@@ -52,6 +54,8 @@ function onChange(next, fx, by) {
 function undo() { if (!drag) { closeMenu(); session?.undo(); } }
 
 function draw(o = {}) {
+  for (const id of peeking) if (!state.piles[id]) { peeking.delete(id); sendPeek(); }
+  for (const [seat] of peekers) if (!online.includes(state.seats.find((x) => x.id === seat)?.player)) peekers.delete(seat);
   placeHandBar();
   const now = performance.now();
   const others = [...remote.values()].filter((r) => now - r.at < 4000).map((r) => r.d);
@@ -62,10 +66,13 @@ function draw(o = {}) {
     target: drag?.target,
     remote: others,
     online: new Set(online),
+    peekSpread: peeking,
+    remotePeek: new Map([...peekers].flatMap(([seat, piles]) => piles.map((id) => [id, seat]))),
     editSeat: session?.seat ?? null,
     presence: [
       ...(drag?.active ? [{ seat: me, cards: drag.cards ?? state.piles[drag.pile]?.cards ?? [] }] : []),
       ...others.map((d) => ({ seat: d.seat, cards: d.cards ?? state.piles[d.pile]?.cards ?? [] })),
+      ...[...peekers].map(([seat, piles]) => ({ seat, cards: piles.flatMap((id) => state.piles[id]?.cards ?? []) })),
     ],
   });
 }
@@ -140,6 +147,7 @@ function startHost(id, name, color) {
     onChange, save: hostSave(id), onRoster(list) { online = list; refreshBar(); draw(); },
   });
   net.on("drag", onRemoteDrag);
+  net.on("peek", onRemotePeek);
   net.start();
   hostSave(id)(st);
   state = st; me = session.seat; view.viewer = me;
@@ -168,6 +176,7 @@ function startJoin(id, name, color) {
     onLost() { remote.clear(); openGate({ step: "lost", host: hostOwn }); },
   });
   net.on("drag", onRemoteDrag);
+  net.on("peek", onRemotePeek);
   net.start();
 }
 const hostOwn = () => { location.href = tableUrl("").replace(/[?&]t=[^&]*/, "").replace(/\?$/, ""); };
@@ -223,7 +232,8 @@ function cardTarget(id) {
   if (!where) return null;
   if (where.pile) {
     const p = state.piles[where.pile];
-    return { card: p.cards.at(-1), pile: p.id };
+    // a spread stack hands you the card you pointed at; any other, its top card
+    return { card: spreadNow(p) ? id : p.cards.at(-1), pile: p.id };
   }
   return { card: id, hand: where.hand };
 }
@@ -233,21 +243,51 @@ function refresh(t) {
   if (t.whole) return state.piles[t.pile] ? t : null;
   return cardTarget(t.card);
 }
-// a stack of more than one card
+// a stack of more than one card; and one laid out in a row
 const isStack = (t) => !t.hand && state.piles[t.pile]?.cards.length > 1;
+const spreadNow = (p) => p.look === "spread" || peeking.has(p.id);
+const isSpread = (t) => isStack(t) && spreadNow(state.piles[t.pile]);
+function togglePeekStack(pileId) {
+  if (peeking.has(pileId)) peeking.delete(pileId); else peeking.add(pileId);
+  sendPeek();
+  draw();
+}
+// the others see which stacks you're looking through (your ring and name on them), not the cards
+function sendPeek() { if (session?.seat) netRef?.send("peek", { seat: session.seat, piles: [...peeking] }); }
+function onRemotePeek(m) {
+  if (!m?.seat || m.seat === session?.seat) return;
+  if (m.piles.length) peekers.set(m.seat, m.piles); else peekers.delete(m.seat);
+  draw();
+}
 
 // where carried cards would land if dropped at (x, y), in table coordinates
 function dropTarget(x, y) {
   const carried = new Set(drag.cards ?? state.piles[drag.pile].cards);
   const place = view.placement(state);
-  // onto a stack: the pointer over its top card or its count tab
+  // onto a stack: the pointer over its top card (any card, when it's spread) or its count tab
   let best = null, bestD = Infinity;
   const down = view.screenDir(0, 1), reach = GRIP_REACH;
   for (const p of Object.values(state.piles)) {
     if (p.id === drag.pile && drag.whole) continue;
     const rest = p.cards.filter((id) => !carried.has(id));
     if (!rest.length) continue;
-    for (const id of [rest.at(-1)]) {
+    // a spread stack takes the card at the gap the pointer is over, like a hand: after every card
+    // whose visible strip's middle it's past
+    if (p.look === "spread" && !peeking.has(p.id)) {
+      // (a whole stack goes in centered on the pointer: its first card half its width to the left)
+      const k = rest.length, g = spreadGap(k), c = Math.cos(p.rot), s = Math.sin(p.rot);
+      const nIn = carried.size, lead = drag.whole ? ((nIn - 1) * g) / 2 : 0;
+      const lx = (x - p.x) * c + (y - p.y) * s - lead, ly = -(x - p.x) * s + (y - p.y) * c;
+      if (Math.abs(ly) < CARD_H / 2 + 8 && lx > -CARD_W / 2 - 8 && lx < (k - 1) * g + CARD_W / 2 + 26) {
+        let slot = 0;
+        for (let j = 0; j < k; j++) if (j * g - CARD_W / 2 + g / 2 < lx) slot = j + 1;
+        const index = slot < k ? p.cards.indexOf(rest[slot]) : p.cards.length;
+        const d = Math.abs(ly) / 4; // the row is the place to be, wherever along it you are
+        if (d < bestD) { bestD = d; best = { pile: p.id, slot, index }; }
+      }
+      continue;
+    }
+    for (const id of spreadNow(p) ? rest : [rest.at(-1)]) {
       const q = place.get(id);
       const c = Math.cos(-q.rot), s = Math.sin(-q.rot);
       const lx = (x - q.x) * c - (y - q.y) * s, ly = (x - q.x) * s + (y - q.y) * c;
@@ -373,22 +413,32 @@ tableEl.addEventListener("pointerup", (e) => {
   const d = drag; drag = null;
   sendDrag();
   const to = d.target;
+  // two face-up cards put together start a stack that lies spread out, so both stay readable
+  const startsSpread = (pileId, landingFaceUp) => {
+    const p = state.piles[pileId];
+    return p?.cards.length === 1 && !p.look && state.cards[p.cards[0]].faceUp && landingFaceUp;
+  };
+  const spreadIt = (act, pileId) => ({ type: "batch", actions: [...(act.type === "batch" ? act.actions : [act]), { type: "setLook", pile: pileId, look: "spread" }] });
   if (d.whole) {
     const cards = state.piles[d.pile].cards;
-    if (to?.pile) dispatch({ type: "moveCards", cards: [...cards], to: { pile: to.pile } });
+    if (to?.pile) {
+      const act = { type: "moveCards", cards: [...cards], to: { pile: to.pile, ...(to.slot != null ? { index: to.index } : {}) } };
+      dispatch(startsSpread(to.pile, cards.every((id) => state.cards[id].faceUp)) ? spreadIt(act, to.pile) : act);
+    }
     else if (to?.hand) dispatch({ type: "moveCards", cards: [...cards], to: { hand: to.hand, index: to.index } });
     else dispatch({ type: "movePile", pile: d.pile, x: d.x, y: d.y });
   } else {
     const from = d.from;
     const alone = from.pile && state.piles[from.pile].cards.length === 1;
     let act;
-    if (to?.pile) act = { type: "moveCards", cards: d.cards, to: { pile: to.pile } };
+    if (to?.pile) act = { type: "moveCards", cards: d.cards, to: { pile: to.pile, ...(to.slot != null ? { index: to.index } : {}) } };
     else if (to?.hand) act = { type: "moveCards", cards: d.cards, to: { hand: to.hand, index: to.index } };
     else if (alone) act = { type: "movePile", pile: from.pile, x: d.x, y: d.y, rot: d.rot };
     else act = { type: "moveCards", cards: d.cards, to: { newPile: { id: newId(), x: d.x, y: d.y, rot: d.rot + (Math.random() - .5) * 0.06 } } };
     // onto the table on whichever side it was carried (into a hand, it's just held)
     const lands = from.hand ? false : state.cards[d.cards[0]].faceUp;
     if (!to?.hand && d.faceUp !== lands) act = { type: "batch", actions: [act, { type: "flip", cards: d.cards }] };
+    if (to?.pile && startsSpread(to.pile, d.faceUp)) act = spreadIt(act, to.pile);
     dispatch(act);
   }
 });
@@ -445,6 +495,20 @@ function deal(pileId, count) {
 function toggleShown(seat) {
   dispatch({ type: "setHandShown", seat, shown: !state.shownHands?.[seat] });
 }
+// put your whole hand down on the table in front of you: face down, spread in a row
+function dropHand(seat) {
+  const hand = state.hands[seat];
+  if (!hand.length) return;
+  const i = state.seats.findIndex((x) => x.id === seat), n = state.seats.length, a = seatAngle(i, n);
+  // the row's middle in front of you (a spread row grows rightward from its first card)
+  const c = handCenter(i, n, HAND_R - 130), id = newId();
+  const half = ((hand.length - 1) * spreadGap(hand.length)) / 2;
+  const x = c.x - Math.sin(a) * half, y = c.y + Math.cos(a) * half;
+  dispatch({ type: "batch", actions: [
+    { type: "moveCards", cards: [...hand], to: { newPile: { id, x, y, rot: a - Math.PI / 2 } } },
+    { type: "setLook", pile: id, look: "spread" },
+  ] });
+}
 function sortHand(seat) {
   const key = (id) => SUITS.indexOf(state.cards[id].suit) * 20 + RANKS.indexOf(state.cards[id].rank);
   const sorted = [...state.hands[seat]].sort((a, b) => key(a) - key(b));
@@ -463,17 +527,19 @@ function openMenu(t, x, y) {
   const sep = () => { if (items.length && items.at(-1)) items.push(null); };
   const pile = t.pile ? state.piles[t.pile] : null;
   const c = t.card ? state.cards[t.card] : null;
-  const look = () => item(c.privateTo === me ? "Stop peeking" : isStack(t) ? "Peek top card" : "Peek", "P", () => toggleLook(t));
+  const look = () => item(c.privateTo === me ? "Stop peeking" : isStack(t) && !isSpread(t) ? "Peek top card" : "Peek", "P", () => toggleLook(t));
   if (t.hand) {
     item(state.shownHands?.[t.hand] ? "Hide hand" : "Show hand", "", () => toggleShown(t.hand));
     if (state.hands[t.hand].length > 1) item("Sort hand", "", () => sortHand(t.hand));
+    item("Drop hand", "", () => dropHand(t.hand));
+  } else if (isSpread(t) && c) {
+    // spread out, each card is its own: F flips the one you pointed at, ⇧F the whole stack
+    item("Flip", "F", () => flipTarget({ card: t.card, pile: pile.id }));
+    if (!c.faceUp) look();
+    item("Flip stack", "⇧F", () => flipStack(pile.id));
   } else if (isStack(t)) {
-    // F turns the whole stack over; the top card on its own is ⇧F
     item("Flip stack", "F", () => flipStack(pile.id));
-    if (c) {
-      item("Flip top card", "⇧F", () => flipTarget({ card: t.card, pile: pile.id }));
-      if (!c.faceUp) look();
-    }
+    if (c && !c.faceUp) look();
   } else if (c) {
     item("Flip", "F", () => flipTarget(t));
     if (!c.faceUp) look();
@@ -481,7 +547,22 @@ function openMenu(t, x, y) {
   if (pile && pile.cards.length > 1) {
     sep();
     item("Shuffle", "S", () => shufflePile(pile.id));
-    item(pile.messy ? "Straighten stack" : "Show top few", "", () => dispatch({ type: "setMessy", pile: pile.id, messy: !pile.messy }));
+    // how the stack lies: squared up, the top few showing, or spread in a row
+    const lies = pile.look ?? (pile.messy ? "few" : null);
+    // a spread row grows rightward from its bottom card, so spreading moves the stack's spot
+    // half a row left (and straightening moves it back) to keep the cards where they were
+    const setLook = (look) => () => {
+      const k = pile.cards.length, half = ((k - 1) * spreadGap(k)) / 2;
+      const shift = look === "spread" ? -half : lies === "spread" ? half : 0;
+      const acts = [{ type: "setLook", pile: pile.id, look }];
+      if (shift) acts.push({ type: "movePile", pile: pile.id, x: pile.x + Math.cos(pile.rot) * shift, y: pile.y + Math.sin(pile.rot) * shift, rot: pile.rot });
+      dispatch(acts.length > 1 ? { type: "batch", actions: acts } : acts[0]);
+    };
+    if (peeking.has(pile.id)) item("Stop peeking at stack", "", () => togglePeekStack(pile.id));
+    else item("Peek stack", "", () => togglePeekStack(pile.id));
+    if (lies !== "few") item("Show top few", "", setLook("few"));
+    if (lies !== "spread") item("Spread stack", "", setLook("spread"));
+    if (lies) item("Straighten stack", "", setLook(null));
     item("Deal…", "", () => showDeal(pile.id), true);
     item("Split…", "", () => showSplit(pile.id), true);
   }
@@ -640,10 +721,12 @@ const handBar = document.createElement("div");
 handBar.className = "ct-handbar";
 handBar.innerHTML = `
   <button data-show></button>
-  <button data-sort title="Sort your hand by suit, then rank">Sort</button>`;
+  <button data-sort title="Sort your hand by suit, then rank">Sort</button>
+  <button data-drop title="Put your whole hand on the table in front of you, face down and spread out">Drop hand</button>`;
 document.body.appendChild(handBar);
 handBar.querySelector("[data-show]").addEventListener("click", () => toggleShown(me));
 handBar.querySelector("[data-sort]").addEventListener("click", () => sortHand(me));
+handBar.querySelector("[data-drop]").addEventListener("click", () => dropHand(me));
 
 function placeHandBar() {
   const hand = state.hands[me] ?? [];
@@ -671,7 +754,10 @@ function placeHandBar() {
 // ---- keyboard: acts on the card or stack under the pointer --------------------------------
 
 addEventListener("keydown", (e) => {
-  if (e.key === "Escape") { closeMenu(); closeShare(); closeEditor(); return; }
+  if (e.key === "Escape") {
+    if (!menu && !editor && !document.querySelector(".ct-share") && peeking.size) { peeking.clear(); sendPeek(); draw(); }
+    closeMenu(); closeShare(); closeEditor(); return;
+  }
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z" && !e.target.closest?.("input, textarea")) {
     e.preventDefault();
     if (!e.shiftKey) undo();
@@ -689,9 +775,11 @@ addEventListener("keydown", (e) => {
   const k = e.key.toLowerCase();
   if (k === "f") {
     if (e.repeat) return e.preventDefault();
-    // a stack turns over as a whole; ⇧F turns just its top card
     if (t.hand) return;
-    if (t.whole || (isStack(t) && !e.shiftKey)) flipStack(t.pile);
+    // F turns a stack over as a whole and ⇧F just its top card; spread out, it's the other way
+    // round: F flips the card you're pointing at and ⇧F the whole stack
+    const whole = t.whole || (isStack(t) && (isSpread(t) ? e.shiftKey : !e.shiftKey));
+    if (whole) flipStack(t.pile);
     else if (t.card) flipTarget({ card: t.card });
   } else if (k === "p" && t.card && !t.hand) toggleLook(t);
   else if (k === "s" && t.pile && state.piles[t.pile]?.cards.length > 1) shufflePile(t.pile);
@@ -726,7 +814,7 @@ startAboutDiagram();
 // test hook (e2e/*.spec.mjs)
 window.cardTable = {
   get state() { return state; }, get me() { return me; }, get session() { return session; }, get online() { return online; },
-  view, dispatch, setViewer, deal, shufflePile, split, undo, toggleShown,
+  view, dispatch, setViewer, deal, shufflePile, split, undo, toggleShown, dropHand,
   // host only: a fresh table with n seats, you in the first, no history
   reset(n = 4) {
     const st = apply(newTable(n), { type: "sit", seat: "s0", player, name: read("name") ?? "You", color: read("color") ?? undefined });

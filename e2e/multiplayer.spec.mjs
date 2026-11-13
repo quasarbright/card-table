@@ -188,3 +188,17 @@ test("the pencil by your name changes your name and color for everyone", async (
   await expect(A.locator(".ct-plate", { hasText: "Ana B" })).toBeVisible();
   expect(new Set(s.seats.map((x) => x.color)).size).toBe(s.seats.length);
 });
+
+test("while you look through a stack, the others see your ring on it but not the cards", async ({ context }) => {
+  const { A, B } = await twoAtATable(context);
+  const g = await center(B, ".ct-grip");
+  await B.mouse.click(g.x, g.y);
+  await B.getByRole("button", { name: "Peek stack" }).click();
+  await settle(A);
+  expect(await B.locator(".ct-card .ct-index").count()).toBe(104);
+  expect(await A.locator(".ct-card .ct-index").count()).toBe(0);
+  await expect(A.locator(".ct-tag", { hasText: "Ana" })).toBeVisible();
+  await B.keyboard.press("Escape");
+  await settle(A);
+  await expect(A.locator(".ct-tag")).toHaveCount(0);
+});

@@ -9,7 +9,8 @@
 // state = {
 //   seats: [{ id, name, color, player }],         // in order around the table; player: who sits there
 //   cards: { [id]: { id, rank, suit, faceUp, privateTo } },
-//   piles: { [id]: { id, x, y, rot, z, messy, cards: [bottom … top] } },  // messy: top few show
+//   piles: { [id]: { id, x, y, rot, z, look, cards: [bottom … top] } },
+//     look: squared up (none), "few" (loosely heaped, the top few showing) or "spread" (in a row)
 //   hands: { [seatId]: [cardId, …] },             // left to right, as the owner sees them
 //   shownHands: { [seatId]: true },               // hands laid flat, face up, for everyone
 //   nextZ,                                        // stacking order for piles
@@ -100,12 +101,13 @@ export function tiltedToward(state, cardId) {
 
 // ---- actions -------------------------------------------------------------------------------
 //
-// { type: "moveCards", cards: [ids], to }   to = { pile: id } (on top)
+// { type: "moveCards", cards: [ids], to }   to = { pile: id, index? } (on top, or at index)
 //                                               | { newPile: { id, x, y, rot } }
 //                                               | { hand: seatId, index }
 // { type: "movePile", pile, x, y }
 // { type: "flip", cards: [ids] }             turn each card over in place
-// { type: "flipPile", pile }                 turn the whole stack over: order reverses too
+// { type: "flipPile", pile }                 turn the whole stack over: order reverses too; it
+//                                            keeps its look
 // { type: "setPrivate", cards: [ids], seat } seat = null makes them hidden from everyone again
 // { type: "shuffle", pile, order }           order: the pile's cards, bottom → top
 // { type: "deal", pile, count, seats }       count cards to each seat's hand, one at a time
@@ -114,7 +116,8 @@ export function tiltedToward(state, cardId) {
 // { type: "setPlayer", seat, name?, color? } rename or recolor a seat; a color no player has
 //                                            (an empty seat holding it swaps with you)
 // { type: "setHandShown", seat, shown }     lay a hand flat and face up (it stays that seat's)
-// { type: "setMessy", pile, messy }         squared up (only the top shows) or loosely heaped
+// { type: "setLook", pile, look }           null (squared up), "few" or "spread"
+// { type: "setMessy", pile, messy }         the same as look "few" / null
 // { type: "batch", actions: [...] }         several actions as one step (one undo)
 // { type: "split", pile, parts: [{ id, x, y, rot }] }  cut into parts.length stacks; parts[0]
 //                                            keeps the pile's id and gets the bottom cards
@@ -154,11 +157,12 @@ function raise(s, pileId) { s.piles[pileId].z = s.nextZ++; }
 
 const ACTIONS = {
   moveCards(s, { cards, to }) {
-    // a hand index counts positions before any of the moved cards leave the hand
-    let index = to.hand ? to.index ?? s.hands[to.hand].length : 0;
+    // an index (into a hand, or a stack) counts positions before any of the moved cards leave
+    let index = to.hand ? to.index ?? s.hands[to.hand].length : to.pile ? to.index ?? null : 0;
     for (const id of cards) {
       const from = take(s, id);
       if (to.hand && from.hand === to.hand && from.index < index) index--;
+      if (to.pile && index != null && from.pile === to.pile && from.index < index) index--;
       // a card leaving someone's hand, or landing in one, stops being looked at
       s.cards[id].privateTo = null;
     }
@@ -166,8 +170,10 @@ const ACTIONS = {
       for (const id of cards) s.cards[id].faceUp = false;
       s.hands[to.hand].splice(Math.max(0, Math.min(index, s.hands[to.hand].length)), 0, ...cards);
     } else if (to.pile) {
-      if (!s.piles[to.pile]) throw new Error(`no pile ${to.pile}`);
-      s.piles[to.pile].cards.push(...cards);
+      const p = s.piles[to.pile];
+      if (!p) throw new Error(`no pile ${to.pile}`);
+      if (index == null) p.cards.push(...cards);
+      else p.cards.splice(Math.max(0, Math.min(index, p.cards.length)), 0, ...cards);
       raise(s, to.pile);
     } else if (to.newPile) {
       const { id, x, y, rot = 0 } = to.newPile;
@@ -192,7 +198,7 @@ const ACTIONS = {
   flipPile(s, { pile }) {
     const p = s.piles[pile];
     p.cards.reverse();
-    p.messy = false; // a stack turned over lands squared up
+    // it keeps how it lies: squared up, the top few showing, or spread out
     for (const id of p.cards) { s.cards[id].faceUp = !s.cards[id].faceUp; s.cards[id].privateTo = null; }
     raise(s, pile);
   },
@@ -234,7 +240,12 @@ const ACTIONS = {
     s.shownHands = { ...(s.shownHands ?? {}) };
     if (shown) s.shownHands[seat] = true; else delete s.shownHands[seat];
   },
-  setMessy(s, { pile, messy }) { s.piles[pile].messy = !!messy; },
+  setLook(s, { pile, look }) {
+    const p = s.piles[pile];
+    delete p.messy;
+    if (look === "few" || look === "spread") p.look = look; else delete p.look;
+  },
+  setMessy(s, { pile, messy }) { ACTIONS.setLook(s, { pile, look: messy ? "few" : null }); },
   batch(s, { actions }) { for (const a of actions) ACTIONS[a.type](s, a); },
   split(s, { pile, parts }) {
     const cards = s.piles[pile].cards, n = parts.length;

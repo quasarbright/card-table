@@ -146,16 +146,16 @@ test("dealing a whole stack: the pile is used up and the counts differ by at mos
   assert.deepEqual(Object.values(s.hands).map((h) => h.length), [11, 11, 10, 10, 10]);
 });
 
-test("batch applies its actions in order; flipping a stack squares it up", () => {
-  let s = apply(newTable(2), { type: "setMessy", pile: "deck", messy: true });
-  assert.equal(s.piles.deck.messy, true);
+test("batch applies its actions in order; flipping a stack keeps how it lies", () => {
+  let s = apply(newTable(2), { type: "setLook", pile: "deck", look: "spread" });
+  assert.equal(s.piles.deck.look, "spread");
   s = apply(s, { type: "batch", actions: [
     { type: "moveCards", cards: ["AS"], to: { newPile: { id: "a", x: 400, y: 500 } } },
     { type: "flip", cards: ["AS"] },
     { type: "flipPile", pile: "deck" },
   ] });
   assert.equal(s.cards.AS.faceUp, true);
-  assert.equal(s.piles.deck.messy, false);
+  assert.equal(s.piles.deck.look, "spread");
   checkConservation(s);
 });
 
@@ -198,4 +198,19 @@ test("colors: a seat can take any color nobody else has; new seats get a free on
   s = apply(s, { type: "setPlayer", seat: "s1", color: open });
   assert.equal(s.seats[1].color, open);
   assert.equal(s.seats[2].color, "#f0b84a");
+});
+
+test("a card can go into the middle of a stack, counted before it leaves", () => {
+  let s = newTable(2);
+  const [a, b, c] = s.piles.deck.cards.slice(-3);
+  s = apply(s, { type: "moveCards", cards: [c, b, a], to: { newPile: { id: "row", x: 300, y: 300 } } });
+  const d = s.piles.deck.cards.at(-1);
+  s = apply(s, { type: "moveCards", cards: [d], to: { pile: "row", index: 1 } });
+  assert.deepEqual(s.piles.row.cards, [c, d, b, a]);
+  // within the same stack: the top card to the bottom
+  s = apply(s, { type: "moveCards", cards: [a], to: { pile: "row", index: 0 } });
+  assert.deepEqual(s.piles.row.cards, [a, c, d, b]);
+  s = apply(s, { type: "moveCards", cards: [c], to: { pile: "row", index: 4 } });
+  assert.deepEqual(s.piles.row.cards, [a, d, b, c]);
+  checkConservation(s);
 });
