@@ -15,7 +15,8 @@ export default defineConfig({
     { name: "firefox", use: { ...devices["Desktop Firefox"], viewport: { width: 1200, height: 800 } } },
   ],
   webServer: {
-    command: `python3 -m http.server ${PORT}`,
+    // threaded, HTTP/1.0, never cached: python3 -m http.server stalls the odd module request
+    command: `python3 e2e/serve.py ${PORT} .`,
     url: `http://localhost:${PORT}/index.html`,
     // never reuse: a stray server on this port (another project) would get tested instead
     reuseExistingServer: false,
