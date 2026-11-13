@@ -274,13 +274,12 @@ function dropTarget(x, y) {
     // a spread stack takes the card at the gap the pointer is over, like a hand: after every card
     // whose visible strip's middle it's past
     if (p.look === "spread" && !peeking.has(p.id)) {
-      // (a whole stack goes in centered on the pointer: its first card half its width to the left)
-      const k = rest.length, g = spreadGap(k), c = Math.cos(p.rot), s = Math.sin(p.rot);
-      const nIn = carried.size, lead = drag.whole ? ((nIn - 1) * g) / 2 : 0;
-      const lx = (x - p.x) * c + (y - p.y) * s - lead, ly = -(x - p.x) * s + (y - p.y) * c;
-      if (Math.abs(ly) < CARD_H / 2 + 8 && lx > -CARD_W / 2 - 8 && lx < (k - 1) * g + CARD_W / 2 + 26) {
-        let slot = 0;
-        for (let j = 0; j < k; j++) if (j * g - CARD_W / 2 + g / 2 < lx) slot = j + 1;
+      // the slot comes from the row as it's drawn with the carried cards in it (k + n cards, so
+      // spaced a little tighter): the one that puts the middle of what you carry under the pointer
+      const k = rest.length, nIn = carried.size, g = spreadGap(k + nIn), c = Math.cos(p.rot), s = Math.sin(p.rot);
+      const lx = (x - p.x) * c + (y - p.y) * s, ly = -(x - p.x) * s + (y - p.y) * c;
+      if (Math.abs(ly) < CARD_H / 2 + 8 && lx > -CARD_W / 2 - 8 && lx < (k + nIn - 1) * g + CARD_W / 2 + 26) {
+        const slot = Math.max(0, Math.min(k, Math.round((lx - ((nIn - 1) * g) / 2) / g)));
         const index = slot < k ? p.cards.indexOf(rest[slot]) : p.cards.length;
         const d = Math.abs(ly) / 4; // the row is the place to be, wherever along it you are
         if (d < bestD) { bestD = d; best = { pile: p.id, slot, index }; }
@@ -309,13 +308,13 @@ function dropTarget(x, y) {
     const along = (x - c.x) * right.x + (y - c.y) * right.y, across = (x - c.x) * out.x + (y - c.y) * out.y;
     const hand = state.hands[seat.id], rest = hand.filter((id) => !carried.has(id));
     const shown = !!state.shownHands?.[seat.id];
-    const reach = handReach(own, rest.length + 1, shown);
+    const r = rest.length, nIn = carried.size, m = r + nIn;
+    const reach = handReach(own, m, shown);
     if (Math.abs(along) > reach.along || Math.abs(across) > reach.across) continue;
-    // each card in the closed-up hand shows its left strip (the next card covers the rest);
-    // the pointer goes after every card whose strip middle it's past
-    const r = rest.length, gap = handGap(own, r, shown), halfW = CARD_W / 2;
-    let slot = 0;
-    for (let j = 0; j < r; j++) if ((j - (r - 1) / 2) * gap - halfW + gap / 2 < along) slot = j + 1;
+    // as in a spread stack: the slot that, in the hand as it's drawn with the carried cards in
+    // it, puts the middle of what you carry under the pointer
+    const gm = handGap(own, m, shown);
+    const slot = Math.max(0, Math.min(r, Math.round((along - ((nIn - 1) * gm) / 2) / gm + (m - 1) / 2)));
     const index = slot < rest.length ? hand.indexOf(rest[slot]) : hand.length;
     return { hand: seat.id, slot, index };
   }

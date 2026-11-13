@@ -522,7 +522,8 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
       z.style.setProperty("--seat", seat.color);
       const a = seatAngle(i, n);
       z.style.transform = `translate(${c.x}px, ${c.y}px) rotate(${(a - Math.PI / 2) * DEG}deg) translate(-50%, -50%)`;
-      const reach = handReach(own, st.hands[seat.id].length + 1, !!st.shownHands?.[seat.id]);
+      const incoming = o.target?.hand === seat.id ? Math.max(1, o.drag?.cards?.length ?? st.piles[o.drag?.pile]?.cards.length ?? 1) : 1;
+      const reach = handReach(own, st.hands[seat.id].length + incoming, !!st.shownHands?.[seat.id]);
       z.style.width = `${2 * reach.along}px`; z.style.height = `${2 * reach.across}px`;
       z.classList.toggle("ct-target", o.target?.hand === seat.id);
       // who can see this hand: an eye on the area's inner corner, to the right as its owner sits
