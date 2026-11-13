@@ -119,7 +119,8 @@ export function tiltedToward(state, cardId) {
 // { type: "split", pile, parts: [{ id, x, y, rot }] }  cut into parts.length stacks; parts[0]
 //                                            keeps the pile's id and gets the bottom cards
 // { type: "gather", id, x, y, rot }          every card into one face-down stack
-// { type: "setSeats", n }                    hands of removed seats go to the middle
+// { type: "setSeats", n }                    seats grow as people sit down (removed seats' hands
+//                                            go to the middle)
 
 export function apply(state, action) {
   const s = structuredClone(state);
@@ -255,7 +256,7 @@ const ACTIONS = {
     raise(s, id);
   },
   setSeats(s, { n }) {
-    n = Math.max(2, Math.min(MAX_SEATS, n));
+    n = Math.max(1, Math.min(MAX_SEATS, n));
     const seats = makeSeats(n);
     // seats that stay keep their names, players and colors; new ones take colors nobody has
     for (let i = 0; i < Math.min(n, s.seats.length); i++) {

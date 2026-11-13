@@ -224,17 +224,6 @@ test("the table survives a reload; gather brings everything back", async ({ page
   expect(Object.values(s.piles)[0].cards).toHaveLength(52);
 });
 
-test("fewer players: removed hands go back to the middle", async ({ page }) => {
-  await open(page);
-  await page.evaluate(() => window.cardTable.deal("deck", 2));
-  await page.click('#players [data-n="2"]');
-  await settle(page);
-  const s = await state(page);
-  expect(s.seats).toHaveLength(2);
-  expect(await page.locator(".ct-plate").count()).toBe(2);
-  expect(Object.values(s.piles).reduce((n, p) => n + p.cards.length, 0)).toBe(52 - 4);
-});
-
 test("the about modal draws the same table from two seats", async ({ page }) => {
   const errors = await open(page);
   await page.getByRole("button", { name: "about" }).click();

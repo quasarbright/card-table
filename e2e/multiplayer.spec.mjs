@@ -49,10 +49,10 @@ test("host, then join from the link: the joiner gets the next seat and both see 
   await expect(A.locator(".ct-plate", { hasText: "Ana" })).toBeVisible();
   await expect(B.locator(".ct-plate", { hasText: "Mike" })).toBeVisible();
   await expect(B.locator(".ct-plate", { hasText: "Ana (you)" })).toBeVisible();
-  // the host's seat count and view-as are the host's; view-as goes away once someone joins
-  await expect(A.locator("#players")).toBeVisible();
+  // a table starts with the host's seat and grows one for each person who joins
+  expect((await state(A)).seats).toHaveLength(2);
+  await expect(A.locator("#players")).toHaveCount(0);
   await expect(A.locator("#viewer")).toBeHidden();
-  await expect(B.locator("#players")).toBeHidden();
   expect(JSON.stringify(await state(A))).toBe(JSON.stringify(await state(B)));
   expect([...A.errors, ...B.errors]).toEqual([]);
 });
@@ -78,7 +78,7 @@ test("a drag shows on the other screen while it happens, and the drop lands on b
   expect(Object.values(b.piles).find((p) => p.cards.includes(top)).id).not.toBe("deck");
 });
 
-test("a joiner's move reaches the host, and only they can undo it", async ({ context }) => {
+test("a joiner's move reaches the host, and anyone can undo it", async ({ context }) => {
   const { A, B } = await twoAtATable(context);
   const top = (await state(B)).piles.deck.cards.at(-1);
   await B.mouse.move(...Object.values(await center(B, cardSel(top))));
@@ -88,12 +88,28 @@ test("a joiner's move reaches the host, and only they can undo it", async ({ con
   await B.mouse.up();
   await settle(A);
   expect((await state(A)).piles.deck.cards).toHaveLength(51);
-  await expect(A.locator("#undo")).toBeDisabled();
+  // undo is the table's: the host can take back the joiner's move
+  await expect(A.locator("#undo")).toBeEnabled();
   await expect(B.locator("#undo")).toBeEnabled();
-  await B.click("#undo");
-  await settle(A);
+  await A.click("#undo");
+  await settle(B);
   expect((await state(A)).piles.deck.cards).toHaveLength(52);
   expect((await state(B)).piles.deck.cards).toHaveLength(52);
+  await expect(B.locator("#undo")).toBeDisabled();
+});
+
+test("undoing past someone's arrival keeps them at the table", async ({ context }) => {
+  const A = await tab(context), B = await tab(context);
+  await host(A, "Mike");
+  await A.evaluate(() => window.cardTable.shufflePile("deck"));
+  await join(B, A.url(), "Ana");
+  await B.click("#undo");
+  await settle(A);
+  const s = await state(A);
+  expect(s.seats.map((x) => x.name)).toEqual(["Mike", "Ana"]);
+  expect(await B.evaluate(() => window.cardTable.session.seat)).toBe("s1");
+  expect(JSON.stringify(await state(B))).toBe(JSON.stringify(s));
+  await expect(A.locator("#undo")).toBeDisabled();
 });
 
 test("your hand stays hidden from the other player until you show it", async ({ context }) => {
@@ -157,9 +173,10 @@ test("the pencil by your name changes your name and color for everyone", async (
   const mikeColor = (await state(A)).seats[0].color;
   await expect(A.locator(".ct-plate-edit")).toHaveCount(1);
   await B.locator(".ct-plate-edit").click();
-  // Mike's color is taken; an empty seat's color isn't
+  // Mike's color is taken; one nobody has isn't
   await expect(B.locator(`.ct-editor .ct-swatch[data-color="${mikeColor}"]`)).toBeDisabled();
-  const open = (await state(B)).seats[2].color;
+  const used = (await state(B)).seats.map((x) => x.color);
+  const open = await B.locator(".ct-editor .ct-swatch").evaluateAll((els, used) => els.map((e) => e.dataset.color).find((c) => !used.includes(c)), used);
   await expect(B.locator(`.ct-editor .ct-swatch[data-color="${open}"]`)).toBeEnabled();
   await B.fill("#ct-edit-name", "Ana B");
   await B.locator(`.ct-editor .ct-swatch[data-color="${open}"]`).click();

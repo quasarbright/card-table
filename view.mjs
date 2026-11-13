@@ -126,11 +126,13 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
         if (p.messy && k > 1) {
           // loosely heaped: the top three step back up and to the left so their corners show,
           // the rest lie askew under the third with only their edges peeking out
+          // (each one steps out 21 to the left: a whole corner index's width, so the card above
+          // never covers the rank below it)
           const depth = Math.min(k - 1 - i, 2), deep = k - 1 - i > 2;
           const j = (n) => jitter(id, n);
-          ox = -depth * 15 + 15 + j(1) * (deep ? 6 : 2.5);
-          oy = -depth * 7 + 7 + j(2) * (deep ? 5 : 2);
-          a = (deep ? j(3) * 0.24 : j(3) * 0.11 - depth * 0.05);
+          ox = -depth * 21 + 21 + j(1) * (deep ? 6 : 1.5);
+          oy = -depth * 6 + 6 + j(2) * (deep ? 5 : 1.5);
+          a = (deep ? j(3) * 0.24 : j(3) * 0.04 - depth * 0.05);
         }
         out.set(id, {
           x: px + ox * c - oy * s, y: py + ox * s + oy * c, rot: prot + a,
@@ -148,10 +150,12 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
       const reorder = gapAt >= 0 && into.inHand;
       if (gapAt >= 0) list.splice(gapAt, 0, SLOT);
       list.forEach((id, i) => {
-        // the cards either side of the gap step aside so it's wide enough to see
-        const q = handSlot(si, n, own, i, list.length, gapAt < 0 || reorder ? 0 : Math.sign(i - gapAt), shown);
+        // the cards either side of the gap step aside so it's wide enough to see; reordering, the
+        // ones to the left step further left so the carried card never hides them
+        const side = gapAt < 0 ? 0 : Math.sign(i - gapAt);
+        const q = handSlot(si, n, own, i, list.length, reorder ? (side < 0 ? -1.2 : 0) : side, shown);
         if (id === SLOT) {
-          if (reorder) rides.set(into, { ...q, z: 10000 + si * 100 + i, angle: seatAngle(si, n), hand: seat.id });
+          if (reorder) rides.set(into, { ...q, z: 10000 + si * 100 + i, angle: seatAngle(si, n), hand: seat.id, gap: handGap(own, list.length, shown) });
           else if (into.local) out.slot = { ...q, z: 10000 + si * 100 + i };
           return;
         }
@@ -165,7 +169,10 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
         if (r) {
           // along the hand's line, under the pointer, raised toward the middle of the table
           const right = { x: Math.sin(r.angle), y: -Math.cos(r.angle) }, outward = { x: Math.cos(r.angle), y: Math.sin(r.angle) };
-          const along = (d.x - r.x) * right.x + (d.y - r.y) * right.y;
+          // it follows the pointer along the hand, but no further than its own slot's width,
+          // so it can't slide over the cards beside it
+          const reach = r.gap * 0.45;
+          const along = Math.max(-reach, Math.min(reach, (d.x - r.x) * right.x + (d.y - r.y) * right.y));
           out.set(id, {
             x: r.x + right.x * along - outward.x * 16, y: r.y + right.y * along - outward.y * 16,
             rot: r.rot, z: r.z, scale: r.scale, carried: true, riding: true, hand: r.hand, drag: d,

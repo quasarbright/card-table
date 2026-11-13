@@ -25,7 +25,7 @@ let player = read("player");
 if (!player) { player = Math.random().toString(36).slice(2, 12); write("player", player); }
 
 let session = null;           // hostSession or clientSession, once you've hosted or joined
-let state = newTable(4);      // the table being drawn (a blank one behind the opening screen)
+let state = newTable(1);      // the table being drawn (a blank one behind the opening screen)
 let me = state.seats[0].id;   // the seat you see the table from
 let online = [];              // players connected right now
 const view = createView(document.getElementById("table"), { viewer: me });
@@ -129,7 +129,8 @@ function startHost(id, name, color) {
   history.replaceState(null, "", tableUrl(id));
   let st = hostSaved(id);
   if (!st?.seats?.some((s) => s.player === player)) {
-    st = st ?? newTable(4);
+    // a new table has just your seat; a seat is added for each person who joins
+    st = st ?? newTable(1);
     st = apply(st, { type: "sit", seat: st.seats.find((s) => !s.player)?.id ?? st.seats[0].id, player, name, color });
   }
   const net = connect(id, NET);
@@ -175,31 +176,19 @@ const hostOwn = () => { location.href = tableUrl("").replace(/[?&]t=[^&]*/, "").
 
 const undoEl = document.getElementById("undo");
 undoEl.addEventListener("click", undo);
-const playersEl = document.getElementById("players");
 const viewerEl = document.getElementById("viewer");
-// the host sets how many seats there are; while the host is alone they can sit in any seat to
+// while the host is alone at a table with more than one seat, they can sit in any of them to
 // check what each player sees
 function refreshBar() {
   const host = !!session?.isHost, alone = online.length < 2;
   undoEl.disabled = !session?.canUndo();
-  playersEl.closest(".ct-group").hidden = !host;
-  viewerEl.closest(".ct-group").hidden = !(host && alone);
+  viewerEl.closest(".ct-group").hidden = !(host && alone && state.seats.length > 1);
   document.getElementById("gather").hidden = !session;
   document.getElementById("share").hidden = !session;
   if (host && !alone && me !== session.seat) { me = session.seat; view.viewer = me; draw(); }
-  const taken = state.seats.reduce((m, s, i) => (s.player ? i + 1 : m), 2);
-  playersEl.innerHTML = Array.from({ length: MAX_SEATS - 1 }, (_, i) => {
-    const n = i + 2;
-    return `<button role="radio" aria-checked="${n === state.seats.length}" data-n="${n}"${n < taken ? " disabled" : ""}>${n}</button>`;
-  }).join("");
   viewerEl.innerHTML = state.seats.map((s) =>
     `<button role="radio" aria-checked="${s.id === me}" data-seat="${s.id}" style="--seat:${s.color}" aria-label="${s.name}" data-tip="${s.name}"></button>`).join("");
 }
-playersEl.addEventListener("click", (e) => {
-  const n = +e.target.closest("[data-n]")?.dataset.n;
-  if (!n || n === state.seats.length) return;
-  dispatch({ type: "setSeats", n });
-});
 viewerEl.addEventListener("click", (e) => {
   const id = e.target.closest("[data-seat]")?.dataset.seat;
   if (id) setViewer(id);

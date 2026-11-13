@@ -12,10 +12,13 @@
 //   session.state            the table to draw
 //   session.seat             the seat you're sitting in
 //   session.dispatch(action, fx)   fx: how to animate it (passed along to everyone)
-//   session.undo(), session.canUndo()   take back your own last change, if nobody moved since
+//   session.undo(), session.canUndo()   take back the table's last change, whoever made it
 import { apply, MAX_SEATS } from "./table.mjs";
 
 const HISTORY = 300;
+// who sits where isn't part of the game: undo never takes it back, and it's written into
+// every earlier table too, so undoing past someone's arrival keeps them seated
+const SEATING = new Set(["sit", "setSeats", "setPlayer"]);
 
 // me: { player, name, color }; hooks: { onChange(state, fx), onRoster(players), save(state) }
 export function hostSession(net, state, me, hooks) {
@@ -29,11 +32,15 @@ export function hostSession(net, state, me, hooks) {
       if (from) net.send("reject", { id }, from);
       return false;
     }
-    past.push({ state, by });
-    if (past.length > HISTORY) past.shift();
+    if (SEATING.has(action.type)) {
+      for (const p of past) { try { p.state = apply(p.state, action); } catch {} }
+    } else {
+      past.push({ state, by });
+      if (past.length > HISTORY) past.shift();
+    }
     state = next;
     hooks.save(state);
-    net.send("applied", { action, by, id, fx });
+    net.send("applied", { action, by, id, fx, depth: past.length });
     hooks.onChange(state, fx, by);
     return true;
   }
@@ -41,11 +48,11 @@ export function hostSession(net, state, me, hooks) {
   function online() { return [me.player, ...new Set(peers.values())]; }
   function roster() { const list = online(); net.send("roster", list); hooks.onRoster(list); }
 
-  function undoBy(seat) {
-    if (!seat || past.at(-1)?.by !== seat) return;
+  function undo() {
+    if (!past.length) return;
     state = past.pop().state;
     hooks.save(state);
-    net.send("reset", { state, lastBy: past.at(-1)?.by ?? null });
+    net.send("reset", { state, depth: past.length });
     hooks.onChange(state, null, null);
   }
 
@@ -58,14 +65,14 @@ export function hostSession(net, state, me, hooks) {
       seat = state.seats.at(-1).id;
     }
     if (seat) commit({ type: "sit", seat, player, name, color }, null);
-    net.send("welcome", { state, seat: seat ?? null, lastBy: past.at(-1)?.by ?? null }, peer);
+    net.send("welcome", { state, seat: seat ?? null, depth: past.length }, peer);
     roster();
   });
   net.on("act", ({ id, action, fx }, peer) => {
     const player = peers.get(peer);
     if (player) commit(action, seatOf(player), fx, id, peer);
   });
-  net.on("undo", (_, peer) => undoBy(seatOf(peers.get(peer))));
+  net.on("undo", (_, peer) => { if (peers.has(peer)) undo(); });
   net.onLeave((peer) => { if (peers.delete(peer)) roster(); });
 
   return {
@@ -73,13 +80,13 @@ export function hostSession(net, state, me, hooks) {
     get state() { return state; },
     get seat() { return seatOf(me.player); },
     dispatch(action, fx) { commit(action, seatOf(me.player), fx); },
-    undo() { undoBy(seatOf(me.player)); },
-    canUndo() { const s = seatOf(me.player); return !!s && past.at(-1)?.by === s; },
+    undo,
+    canUndo() { return past.length > 0; },
     online,
     // start over from this table, with no history (tests)
     replace(next) {
       past.length = 0; state = next; hooks.save(state);
-      net.send("reset", { state, lastBy: null });
+      net.send("reset", { state, depth: 0 });
       hooks.onChange(state, { instant: true }, null);
     },
   };
@@ -88,7 +95,7 @@ export function hostSession(net, state, me, hooks) {
 // hooks: { onChange(state, fx, by), onWelcome(seat), onRoster(players), onLost() }
 export function clientSession(net, me, hooks) {
   let confirmed = null, pending = [], shown = null;
-  let host = null, seat = null, lastBy = null, counter = 0;
+  let host = null, seat = null, depth = 0, counter = 0; // depth: how many changes the host can undo
 
   // your changes the host hasn't confirmed yet, replayed on top of what it has
   function rebuild() {
@@ -102,7 +109,7 @@ export function clientSession(net, me, hooks) {
 
   net.onJoin(hello);
   net.on("welcome", (m, peer) => {
-    host = peer; confirmed = m.state; seat = m.seat; lastBy = m.lastBy; pending = [];
+    host = peer; confirmed = m.state; seat = m.seat; depth = m.depth; pending = [];
     rebuild();
     hooks.onWelcome(seat);
     hooks.onChange(shown, { instant: true }, null);
@@ -112,7 +119,7 @@ export function clientSession(net, me, hooks) {
     try { confirmed = apply(confirmed, m.action); } catch { hello(host); return; } // out of step: start over
     const mine = pending.some((p) => p.id === m.id);
     pending = pending.filter((p) => p.id !== m.id);
-    lastBy = m.by;
+    depth = m.depth;
     rebuild();
     // your own change already played its animation when you made it
     hooks.onChange(shown, mine ? null : m.fx, m.by);
@@ -120,7 +127,7 @@ export function clientSession(net, me, hooks) {
   net.on("reject", (m) => { pending = pending.filter((p) => p.id !== m.id); rebuild(); hooks.onChange(shown, null, null); });
   net.on("reset", (m, peer) => {
     if (peer !== host) return;
-    confirmed = m.state; lastBy = m.lastBy; pending = [];
+    confirmed = m.state; depth = m.depth; pending = [];
     rebuild();
     hooks.onChange(shown, null, null);
   });
@@ -141,6 +148,6 @@ export function clientSession(net, me, hooks) {
       net.send("act", { id, action, fx }, host);
     },
     undo() { if (this.canUndo()) net.send("undo", {}, host); },
-    canUndo() { return !!seat && lastBy === seat && !pending.length; },
+    canUndo() { return !!seat && depth > 0 && !pending.length; },
   };
 }
