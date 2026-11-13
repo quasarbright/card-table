@@ -24,8 +24,9 @@ export const FELT_R = 440;
 export const CARD_W = 70, CARD_H = 98;
 export const SUITS = ["S", "H", "D", "C"];
 export const RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"];
-export const SEAT_COLORS = ["#f0b84a", "#6cb8f0", "#f0708c", "#b392f0", "#f28a52", "#4fd1c5"];
-export const MAX_SEATS = SEAT_COLORS.length;
+// the colors players can choose from; a new seat takes the first one nobody has
+export const SEAT_COLORS = ["#f0b84a", "#6cb8f0", "#f0708c", "#b392f0", "#f28a52", "#4fd1c5", "#a3d977", "#e88fd9"];
+export const MAX_SEATS = 6;
 
 export function seatAngle(i, n) { return Math.PI / 2 + (i * 2 * Math.PI) / n; }
 
@@ -108,7 +109,10 @@ export function tiltedToward(state, cardId) {
 // { type: "setPrivate", cards: [ids], seat } seat = null makes them hidden from everyone again
 // { type: "shuffle", pile, order }           order: the pile's cards, bottom → top
 // { type: "deal", pile, count, seats }       count cards to each seat's hand, one at a time
-// { type: "sit", seat, player, name }        a player takes a seat (and leaves any other)
+// { type: "sit", seat, player, name, color? } a player takes a seat (and leaves any other),
+//                                            in that color unless another player has it
+// { type: "setPlayer", seat, name?, color? } rename or recolor a seat; a color no player has
+//                                            (an empty seat holding it swaps with you)
 // { type: "setHandShown", seat, shown }     lay a hand flat and face up (it stays that seat's)
 // { type: "setMessy", pile, messy }         squared up (only the top shows) or loosely heaped
 // { type: "batch", actions: [...] }         several actions as one step (one undo)
@@ -136,6 +140,13 @@ function take(s, cardId) {
     s.hands[where.hand].splice(where.index, 1);
   }
   return where;
+}
+
+// give a seat a color; an empty seat that had it takes the seat's old one
+function recolor(s, seat, color) {
+  const other = s.seats.find((q) => q !== seat && q.color === color);
+  if (other) other.color = seat.color;
+  seat.color = color;
 }
 
 function raise(s, pileId) { s.piles[pileId].z = s.nextZ++; }
@@ -202,11 +213,21 @@ const ACTIONS = {
       ACTIONS.moveCards(s, { cards: [id], to: { hand: seat } });
     }
   },
-  sit(s, { seat, player, name }) {
+  sit(s, { seat, player, name, color }) {
     for (const x of s.seats) if (x.player === player) x.player = null;
     const x = s.seats.find((q) => q.id === seat);
     if (!x) throw new Error(`no seat ${seat}`);
     x.player = player; x.name = name;
+    if (color && SEAT_COLORS.includes(color) && !s.seats.some((q) => q !== x && q.player && q.color === color)) recolor(s, x, color);
+  },
+  setPlayer(s, { seat, name, color }) {
+    const x = s.seats.find((q) => q.id === seat);
+    if (!x) throw new Error(`no seat ${seat}`);
+    if (name != null) x.name = String(name).slice(0, 20);
+    if (color != null) {
+      if (!SEAT_COLORS.includes(color) || s.seats.some((q) => q !== x && q.player && q.color === color)) throw new Error("color taken");
+      recolor(s, x, color);
+    }
   },
   setHandShown(s, { seat, shown }) {
     s.shownHands = { ...(s.shownHands ?? {}) };
@@ -236,9 +257,12 @@ const ACTIONS = {
   setSeats(s, { n }) {
     n = Math.max(2, Math.min(MAX_SEATS, n));
     const seats = makeSeats(n);
-    // seats that stay keep their names and players
+    // seats that stay keep their names, players and colors; new ones take colors nobody has
     for (let i = 0; i < Math.min(n, s.seats.length); i++) {
-      seats[i].name = s.seats[i].name; seats[i].player = s.seats[i].player ?? null;
+      seats[i].name = s.seats[i].name; seats[i].player = s.seats[i].player ?? null; seats[i].color = s.seats[i].color;
+    }
+    for (let i = s.seats.length; i < n; i++) {
+      seats[i].color = SEAT_COLORS.find((c) => !seats.slice(0, i).some((q) => q.color === c));
     }
     const leftover = s.seats.slice(n).flatMap((seat) => s.hands[seat.id]);
     const hands = Object.fromEntries(seats.map((seat) => [seat.id, s.hands[seat.id] ?? []]));

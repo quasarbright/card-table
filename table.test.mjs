@@ -182,3 +182,20 @@ test("sit puts a player in one seat; fewer seats keep the players that stay", ()
   assert.equal(s.seats[2].player, "abc");
   assert.equal(s.seats[3].player, null);
 });
+
+test("colors: a seat can take any color nobody else has; new seats get a free one", () => {
+  let s = apply(newTable(2), { type: "sit", seat: "s0", player: "me", name: "Mo", color: "#a3d977" });
+  assert.equal(s.seats[0].color, "#a3d977");
+  s = apply(s, { type: "sit", seat: "s1", player: "you", name: "Ann", color: "#a3d977" }); // taken: keeps its own
+  assert.equal(s.seats[1].color, "#6cb8f0");
+  assert.throws(() => apply(s, { type: "setPlayer", seat: "s1", color: "#a3d977" }));
+  s = apply(s, { type: "setPlayer", seat: "s1", name: "Annie", color: "#f0b84a" });
+  assert.equal(s.seats[1].name, "Annie");
+  s = apply(s, { type: "setSeats", n: 3 });
+  assert.equal(new Set(s.seats.map((x) => x.color)).size, 3);
+  // an empty seat's color is free to take: the empty seat gets yours
+  const open = s.seats[2].color;
+  s = apply(s, { type: "setPlayer", seat: "s1", color: open });
+  assert.equal(s.seats[1].color, open);
+  assert.equal(s.seats[2].color, "#f0b84a");
+});

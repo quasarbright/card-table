@@ -132,3 +132,42 @@ test("Invite shows the table's link and a QR code", async ({ context }) => {
   await A.keyboard.press("Escape");
   await expect(A.locator(".ct-share")).toHaveCount(0);
 });
+
+test("pick a color with your name; a joiner asking for a taken one gets a free one", async ({ context }) => {
+  const A = await tab(context), B = await tab(context);
+  await A.goto("/index.html?net=local");
+  await A.getByRole("button", { name: "Host a table" }).click();
+  await A.fill("#ct-name", "Mike");
+  await A.locator('.ct-swatch[data-color="#a3d977"]').click();
+  await A.getByRole("button", { name: "Host table" }).click();
+  await A.waitForFunction(() => !!window.cardTable?.session);
+  expect((await state(A)).seats[0].color).toBe("#a3d977");
+  await B.goto(A.url());
+  await B.fill("#ct-name", "Ana");
+  await B.locator('.ct-swatch[data-color="#a3d977"]').click();
+  await B.getByRole("button", { name: "Join table" }).click();
+  await B.waitForFunction(() => window.cardTable?.session?.connected);
+  const seats = (await state(A)).seats;
+  expect(seats[1].name).toBe("Ana");
+  expect(seats[1].color).not.toBe("#a3d977");
+});
+
+test("the pencil by your name changes your name and color for everyone", async ({ context }) => {
+  const { A, B } = await twoAtATable(context);
+  const mikeColor = (await state(A)).seats[0].color;
+  await expect(A.locator(".ct-plate-edit")).toHaveCount(1);
+  await B.locator(".ct-plate-edit").click();
+  // Mike's color is taken; an empty seat's color isn't
+  await expect(B.locator(`.ct-editor .ct-swatch[data-color="${mikeColor}"]`)).toBeDisabled();
+  const open = (await state(B)).seats[2].color;
+  await expect(B.locator(`.ct-editor .ct-swatch[data-color="${open}"]`)).toBeEnabled();
+  await B.fill("#ct-edit-name", "Ana B");
+  await B.locator(`.ct-editor .ct-swatch[data-color="${open}"]`).click();
+  await B.getByRole("button", { name: "Save" }).click();
+  await settle(A);
+  const s = await state(A);
+  expect(s.seats[1].name).toBe("Ana B");
+  expect(s.seats[1].color).toBe(open);
+  await expect(A.locator(".ct-plate", { hasText: "Ana B" })).toBeVisible();
+  expect(new Set(s.seats.map((x) => x.color)).size).toBe(s.seats.length);
+});

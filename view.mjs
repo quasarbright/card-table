@@ -387,6 +387,12 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
       plate.textContent = open ? "Open seat" : seat.id === viewer && interactive ? `${seat.name} (you)` : seat.name;
       plate.classList.toggle("ct-open", !!open);
       plate.classList.toggle("ct-away", !!(interactive && o.online && seat.player && !o.online.has(seat.player)));
+      // your own seat has a pencil for changing your name and color
+      if (interactive && seat.id === o.editSeat) {
+        const b = el("button", "ct-plate-edit", plate);
+        b.type = "button"; b.title = "Change your name or color"; b.setAttribute("aria-label", b.title);
+        b.innerHTML = `<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4z"/><path d="M14 6l4 4"/></svg>`;
+      }
       // level on screen; but on a narrow screen, seats at the sides run along the rail instead,
       // turned whichever way reads upright
       let turn = -frame.rot;

@@ -17,7 +17,7 @@ import { apply, MAX_SEATS } from "./table.mjs";
 
 const HISTORY = 300;
 
-// me: { player, name }; hooks: { onChange(state, fx), onRoster(players), save(state) }
+// me: { player, name, color }; hooks: { onChange(state, fx), onRoster(players), save(state) }
 export function hostSession(net, state, me, hooks) {
   const past = [];                 // [{ state, by }] before each change, newest last
   const peers = new Map();         // peer id → player id
@@ -50,14 +50,14 @@ export function hostSession(net, state, me, hooks) {
   }
 
   // someone arrives: find them their seat (the one they had, an empty one, or a new one)
-  net.on("hello", ({ player, name }, peer) => {
+  net.on("hello", ({ player, name, color }, peer) => {
     peers.set(peer, player);
     let seat = seatOf(player) ?? state.seats.find((s) => !s.player)?.id;
     if (!seat && state.seats.length < MAX_SEATS) {
       commit({ type: "setSeats", n: state.seats.length + 1 }, null);
       seat = state.seats.at(-1).id;
     }
-    if (seat) commit({ type: "sit", seat, player, name }, null);
+    if (seat) commit({ type: "sit", seat, player, name, color }, null);
     net.send("welcome", { state, seat: seat ?? null, lastBy: past.at(-1)?.by ?? null }, peer);
     roster();
   });
@@ -98,7 +98,7 @@ export function clientSession(net, me, hooks) {
     });
     shown = s;
   }
-  const hello = (peer) => net.send("hello", { player: me.player, name: me.name }, peer);
+  const hello = (peer) => net.send("hello", { player: me.player, name: me.name, color: me.color }, peer);
 
   net.onJoin(hello);
   net.on("welcome", (m, peer) => {

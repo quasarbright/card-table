@@ -7,7 +7,7 @@ import { suitDefs } from "./faces.mjs";
 import { startAboutDiagram } from "./about.mjs";
 import { connect } from "./net.mjs";
 import { hostSession, clientSession } from "./sync.mjs";
-import { openGate, closeGate } from "./gate.mjs";
+import { openGate, closeGate, swatches, wireSwatches } from "./gate.mjs";
 import { openShare, closeShare } from "./share.mjs";
 
 document.body.insertAdjacentHTML("afterbegin", suitDefs());
@@ -62,6 +62,7 @@ function draw(o = {}) {
     target: drag?.target,
     remote: others,
     online: new Set(online),
+    editSeat: session?.seat ?? null,
     presence: [
       ...(drag?.active ? [{ seat: me, cards: drag.cards ?? state.piles[drag.pile]?.cards ?? [] }] : []),
       ...others.map((d) => ({ seat: d.seat, cards: d.cards ?? state.piles[d.pile]?.cards ?? [] })),
@@ -124,12 +125,12 @@ function tableUrl(id) {
 function hostSave(id) { return (st) => write(`host:${id}`, JSON.stringify(st)); }
 function hostSaved(id) { try { return JSON.parse(read(`host:${id}`)); } catch { return null; } }
 
-function startHost(id, name) {
+function startHost(id, name, color) {
   history.replaceState(null, "", tableUrl(id));
   let st = hostSaved(id);
   if (!st?.seats?.some((s) => s.player === player)) {
     st = st ?? newTable(4);
-    st = apply(st, { type: "sit", seat: st.seats.find((s) => !s.player)?.id ?? st.seats[0].id, player, name });
+    st = apply(st, { type: "sit", seat: st.seats.find((s) => !s.player)?.id ?? st.seats[0].id, player, name, color });
   }
   const net = connect(id, NET);
   netRef = net;
@@ -145,14 +146,14 @@ function startHost(id, name) {
   relayout(); refreshBar();
 }
 
-function startJoin(id, name) {
+function startJoin(id, name, color) {
   const net = connect(id, NET);
   netRef = net;
   openGate({ step: "connecting" });
   const giveUp = setTimeout(() => {
     if (!session?.connected) openGate({ step: "unreachable", retry: () => location.reload() });
   }, 25000);
-  session = clientSession(net, { player, name }, {
+  session = clientSession(net, { player, name, color }, {
     onChange,
     onWelcome(seat) {
       clearTimeout(giveUp);
@@ -599,6 +600,51 @@ function split(pileId, n) {
   dispatch({ type: "split", pile: pileId, parts });
 }
 
+// ---- your name and color, from the pencil by your name ---------------------------------------
+
+let editor = null;
+function closeEditor() { editor?.remove(); editor = null; }
+function openEditor(anchor) {
+  closeEditor(); closeMenu();
+  const seat = state.seats.find((s) => s.id === session?.seat);
+  if (!seat) return;
+  // other players' colors are taken; an empty seat's color is yours to take
+  const taken = Object.fromEntries(state.seats.filter((s) => s !== seat && s.player).map((s) => [s.color, s.name]));
+  editor = document.createElement("div");
+  editor.className = "ct-menu ct-editor";
+  editor.innerHTML = `
+    <form class="ct-pop">
+      <label class="ct-pop-title" for="ct-edit-name">Your name</label>
+      <input id="ct-edit-name" class="ct-share-url" maxlength="20" spellcheck="false" />
+      <div class="ct-pop-title">Your color</div>
+      ${swatches(seat.color, taken)}
+      <div class="ct-pop-actions"><button class="ct-act ct-act-ink" type="submit">Save</button></div>
+    </form>`;
+  document.body.appendChild(editor);
+  const input = editor.querySelector("input");
+  input.value = seat.name;
+  let color = seat.color;
+  wireSwatches(editor, (c) => { color = c; });
+  editor.querySelector("form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const name = input.value.trim() || seat.name;
+    write("name", name); write("color", color);
+    dispatch({ type: "setPlayer", seat: seat.id, name, ...(color !== seat.color ? { color } : {}) });
+    closeEditor();
+  });
+  const a = anchor.getBoundingClientRect(), r = editor.getBoundingClientRect();
+  editor.style.left = `${Math.max(8, Math.min(a.left + a.width / 2 - r.width / 2, innerWidth - r.width - 8))}px`;
+  editor.style.top = `${a.top - r.height - 10 > 8 ? a.top - r.height - 10 : Math.min(a.bottom + 10, innerHeight - r.height - 8)}px`;
+  input.focus(); input.select();
+}
+tableEl.addEventListener("click", (e) => {
+  const b = e.target.closest?.(".ct-plate-edit");
+  if (b) openEditor(b);
+});
+addEventListener("pointerdown", (e) => {
+  if (editor && !editor.contains(e.target) && !e.target.closest?.(".ct-plate-edit")) closeEditor();
+});
+
 // ---- your hand's buttons, beside it whenever you hold cards ----------------------------------
 
 const handBar = document.createElement("div");
@@ -636,7 +682,7 @@ function placeHandBar() {
 // ---- keyboard: acts on the card or stack under the pointer --------------------------------
 
 addEventListener("keydown", (e) => {
-  if (e.key === "Escape") { closeMenu(); closeShare(); return; }
+  if (e.key === "Escape") { closeMenu(); closeShare(); closeEditor(); return; }
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z" && !e.target.closest?.("input, textarea")) {
     e.preventDefault();
     if (!e.shiftKey) undo();
@@ -680,12 +726,12 @@ startAboutDiagram();
 // been at it before; otherwise the opening screen offers to host one.
 {
   const id = params.get("t");
-  const name = read("name") ?? "";
-  const remember = (n) => write("name", n);
-  if (id && hostSaved(id) && name) startHost(id, name);
-  else if (id && read(`joined:${id}`) && name) startJoin(id, name);
-  else if (id) openGate({ step: "name", joining: true, name, done: (n) => { remember(n); startJoin(id, n); } });
-  else openGate({ step: "start", name, done: (n) => { remember(n); startHost(newTableId(), n); } });
+  const name = read("name") ?? "", color = read("color") ?? undefined;
+  const remember = (n, c) => { write("name", n); write("color", c); };
+  if (id && hostSaved(id) && name) startHost(id, name, color);
+  else if (id && read(`joined:${id}`) && name) startJoin(id, name, color);
+  else if (id) openGate({ step: "name", joining: true, name, color, done: (n, c) => { remember(n, c); startJoin(id, n, c); } });
+  else openGate({ step: "start", name, color, done: (n, c) => { remember(n, c); startHost(newTableId(), n, c); } });
 }
 
 // test hook (e2e/*.spec.mjs)
@@ -694,7 +740,7 @@ window.cardTable = {
   view, dispatch, setViewer, deal, shufflePile, split, undo, toggleShown,
   // host only: a fresh table with n seats, you in the first, no history
   reset(n = 4) {
-    const st = apply(newTable(n), { type: "sit", seat: "s0", player, name: read("name") ?? "You" });
+    const st = apply(newTable(n), { type: "sit", seat: "s0", player, name: read("name") ?? "You", color: read("color") ?? undefined });
     session.replace(st);
   },
   cardSize: [CARD_W, CARD_H],

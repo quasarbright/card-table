@@ -4,6 +4,9 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Card Table</title>
+  <link rel="icon" type="image/png" href="favicon.png" />
+  <link rel="apple-touch-icon" href="favicon.png" />
+  <meta name="theme-color" content="#0d1612" />
 
   <link rel="stylesheet" href="https://quasarbright.github.io/sketches/shared/cohesion.css" />
   <script type="module" src="https://quasarbright.github.io/sketches/shared/cohesion.js"></script>
@@ -265,6 +268,29 @@
     .ct-qr svg { width: 176px; height: 176px; display: block; }
     .ct-share .ct-pop > .ct-act { width: 100%; }
 
+    /* color swatches: the name step and the pencil's editor */
+    .ct-swatches { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 16px; }
+    .ct-swatch {
+      width: 30px; height: 30px; padding: 0; border-radius: 50%; cursor: pointer;
+      background: var(--seat); border: 0; box-shadow: inset 0 0 0 1px rgba(0,0,0,.25);
+      -webkit-tap-highlight-color: transparent;
+    }
+    .ct-swatch[aria-checked="true"] { box-shadow: 0 0 0 2.5px var(--ivory), 0 0 0 4.5px #1d1c22; }
+    .ct-swatch:disabled { opacity: .28; cursor: not-allowed; }
+    .ct-swatch:focus-visible { outline: 2px solid #a8322f; outline-offset: 3px; }
+
+    /* the pencil on your name plate, and what it opens */
+    .ct-plate-edit {
+      display: inline-grid; place-items: center; vertical-align: -.2em; margin: 0 -.35em 0 .4em;
+      width: 1.45em; height: 1.45em; padding: .22em; box-sizing: border-box; border-radius: 50%;
+      border: 0; background: rgba(242,237,224,.12); color: var(--ivory); cursor: pointer;
+    }
+    .ct-plate-edit:hover { background: rgba(242,237,224,.28); }
+    .ct-editor .ct-pop { width: 296px; display: block; }
+    .ct-editor .ct-share-url { width: 100%; box-sizing: border-box; font-size: .95rem; margin: 6px 0 12px; }
+    .ct-editor .ct-swatches { margin-top: 8px; }
+    .ct-editor .ct-swatch { width: 26px; height: 26px; }
+
     /* ---- the opening screen: host, or put your name in to join ---- */
     .ct-gate {
       position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; padding: 16px;
@@ -283,6 +309,7 @@
     .ct-gate-card .ct-act-ink { color: var(--ivory); }
     .ct-gate-card .ct-act:disabled { opacity: .45; cursor: default; }
     .ct-gate-note { font-size: .85rem; margin: 10px 0 0 !important; color: rgba(29,28,34,.62) !important; }
+    .ct-gate-note.ct-gate-tight { margin: -8px 0 14px !important; }
     .ct-gate-form label { display: block; font-size: .85rem; color: rgba(29,28,34,.7); margin-bottom: 6px; }
     .ct-gate-form input {
       width: 100%; box-sizing: border-box; font: 1.05rem var(--font-ui); color: var(--ink); margin-bottom: 14px;
