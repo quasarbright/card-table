@@ -676,3 +676,88 @@ test("a whole stack carried over a spread stack opens a gap its size and goes in
   expect(s.piles.three).toBeUndefined();
   expect(s.piles.row.cards).toEqual([row[0], row[1], ...three, row[2], row[3], row[4]]);
 });
+
+// a stack of five face-down cards at the middle, looked through with "Peek stack"
+async function peekFive(page) {
+  await page.evaluate(([x, y]) => {
+    const t = window.cardTable, five = t.state.piles.deck.cards.slice(-5);
+    t.dispatch({ type: "moveCards", cards: five, to: { newPile: { id: "five", x, y } } });
+  }, [CX + 250, CY]);
+  await settle(page);
+  const c = await center(page, cardSel(await topOf(page, "five")));
+  await page.mouse.click(c.x, c.y);
+  await page.getByRole("button", { name: "Peek stack" }).click();
+  await settle(page);
+  return (await state(page)).piles.five.cards;
+}
+
+test("a card pulled out of a stack you're looking through stays under the pointer", async ({ page }) => {
+  await open(page);
+  const cards = await peekFive(page);
+  const top = cards.at(-1);
+  const from = await center(page, cardSel(top));
+  await page.mouse.move(from.x, from.y);
+  await page.mouse.down();
+  await page.mouse.move(from.x + 10, from.y - 40, { steps: 3 });
+  await page.mouse.move(from.x - 30, from.y - 160, { steps: 8 });
+  await page.waitForTimeout(400);
+  const now = await center(page, cardSel(top));
+  // grabbed by its middle, it's carried by its middle (a little bigger, but centered)
+  expect(Math.hypot(now.x - (from.x - 30), now.y - (from.y - 160))).toBeLessThan(6);
+  await page.mouse.up();
+});
+
+test("a stack you're looking through rearranges like a hand", async ({ page }) => {
+  await open(page);
+  const cards = await peekFive(page);
+  // the bottom card (leftmost) carried past the fourth goes in after it
+  // (grabbed by the strip of it that shows: the next card covers its middle)
+  const box = await page.locator(cardSel(cards[0])).boundingBox();
+  const a = { x: box.x + 8, y: box.y + box.height / 2 }, d = await center(page, cardSel(cards[3])), e = await center(page, cardSel(cards[4]));
+  await page.mouse.move(a.x, a.y);
+  await page.mouse.down();
+  await page.mouse.move(a.x + 10, a.y, { steps: 2 });
+  await page.mouse.move((d.x + e.x) / 2, a.y, { steps: 14 });
+  await page.waitForTimeout(200);
+  // while carried it rides in the row, face up, over the others
+  expect(await showsFace(page, cards[0])).toBe(true);
+  const z = await page.evaluate((ids) => ids.map((id) => +getComputedStyle(document.querySelector(`.ct-card[data-id="${id}"]`)).zIndex), cards);
+  expect(z[0]).toBeGreaterThan(Math.max(...z.slice(1, 4)));
+  // and the stack still has its eye, and the card you're moving your ring
+  expect(await page.locator(".ct-eye").count()).toBe(1);
+  await page.mouse.up();
+  await settle(page);
+  const after = (await state(page)).piles.five.cards;
+  expect(after).toEqual([cards[1], cards[2], cards[3], cards[0], cards[4]]);
+  // still looking through it, and nothing got turned over
+  expect(await showsFace(page, cards[1])).toBe(true);
+  expect((await state(page)).cards[cards[0]].faceUp).toBe(false);
+});
+
+test("names sit in the middle of their plates", async ({ page }) => {
+  await open(page);
+  const off = await page.evaluate(() => [...document.querySelectorAll(".ct-plate")].map((p) => {
+    const a = p.getBoundingClientRect(), n = p.querySelector(".ct-plate-name").getBoundingClientRect();
+    return (n.y + n.height / 2) - (a.y + a.height / 2);
+  }));
+  expect(off.length).toBeGreaterThan(1);
+  for (const dy of off) expect(Math.abs(dy)).toBeLessThan(0.5);
+});
+
+test("a stack you're looking through keeps its eye while you move its top card through it", async ({ page }) => {
+  await open(page);
+  const cards = await peekFive(page);
+  const top = await center(page, cardSel(cards[4])), b = await center(page, cardSel(cards[1]));
+  await page.mouse.move(top.x, top.y);
+  await page.mouse.down();
+  await page.mouse.move(top.x - 10, top.y, { steps: 2 });
+  await page.mouse.move(b.x, top.y, { steps: 12 });
+  await page.waitForTimeout(300);
+  expect(await page.locator(".ct-eye").count()).toBe(1);
+  // every card you're handling wears your ring, the one you carry too
+  const ringed = await page.evaluate((ids) => ids.map((id) => document.querySelector(`.ct-card[data-id="${id}"]`).classList.contains("ct-ringed")), cards);
+  expect(ringed).toEqual([true, true, true, true, true]);
+  await page.mouse.up();
+  await settle(page);
+  expect(await page.locator(".ct-eye").count()).toBe(1);
+});

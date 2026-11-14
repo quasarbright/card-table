@@ -111,12 +111,20 @@
     .ct-plate {
       transform-origin: 0 0;
       position: absolute; left: 0; top: 0; white-space: nowrap;
-      font-size: calc(12.5px / var(--s, 1)); font-weight: 500;
-      padding: .2em .75em .2em .6em; border-radius: 999px;
+      font-size: calc(12.5px / var(--s, 1)); font-weight: 500; line-height: 1.25;
+      display: flex; align-items: center; gap: .45em;
+      padding: .22em .75em .22em .6em; border-radius: 999px;
       background: rgba(20,12,7,.55); border: calc(1px / var(--s, 1)) solid color-mix(in srgb, var(--seat) 55%, transparent);
       color: var(--text);
     }
-    .ct-plate::before { content: ""; display: inline-block; width: .6em; height: .6em; border-radius: 50%; background: var(--seat); margin-right: .45em; vertical-align: .05em; }
+    /* the name's line box trimmed to its capitals, so the letters sit in the middle whatever line
+       metrics the system reads from the font (Windows put them high, and the dot low) */
+    .ct-plate-name { display: block; }
+    @supports (text-box: trim-both cap alphabetic) {
+      .ct-plate { padding-block: .48em; }
+      .ct-plate-name { text-box: trim-both cap alphabetic; }
+    }
+    .ct-plate::before { content: ""; flex: none; width: .6em; height: .6em; border-radius: 50%; background: var(--seat); }
     .ct-plate.ct-me { border-color: var(--seat); }
     .ct-plate.ct-open { color: var(--muted); border-style: dashed; }
     .ct-plate.ct-away { opacity: .5; }
@@ -352,7 +360,7 @@
 
     /* the pencil on your name plate, and what it opens */
     .ct-plate-edit {
-      display: inline-grid; place-items: center; vertical-align: -.2em; margin: 0 -.35em 0 .4em;
+      display: inline-grid; place-items: center; margin: 0 -.35em 0 -.05em;
       width: 1.45em; height: 1.45em; padding: .22em; box-sizing: border-box; border-radius: 50%;
       border: 0; background: rgba(242,237,224,.12); color: var(--ivory); cursor: pointer;
     }

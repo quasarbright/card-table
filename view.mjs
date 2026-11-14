@@ -178,8 +178,9 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
         if (id === SLOT) {
           // the carried card rides in its gap, a little raised, under the cards to its right;
           // it can lean right with the pointer but never over the card to its left
-          rideIn(into, { x: px + ox * c - oy * s, y: py + ox * s + oy * c, rot: prot, scale: 1, z: pi * 60 + i },
-            { right: { x: c, y: s }, up: { x: s, y: -c }, raise: 8, min: 0, max: spreadGap(k) * 0.6 + 14 });
+          // (in a stack you're looking through it stays face up, over the row, like the rest)
+          rideIn(into, { x: px + ox * c - oy * s, y: py + ox * s + oy * c, rot: prot, scale: 1, z: (peeking ? 8000 : pi * 60) + i },
+            { right: { x: c, y: s }, up: { x: s, y: -c }, raise: peeking ? 16 : 8, min: peeking ? -spreadGap(k) * 0.45 : 0, max: spreadGap(k) * 0.6 + 14, peeking, pile: peeking ? p.id : undefined });
           return;
         }
         out.set(id, {
@@ -228,7 +229,7 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
           const q = r.slots[i] ?? r.slots.at(-1);
           out.set(id, {
             x: q.x + r.right.x * along + r.up.x * r.raise, y: q.y + r.right.y * along + r.up.y * r.raise,
-            rot: q.rot, z: q.z, scale: q.scale, carried: true, riding: true, hand: r.hand, drag: d,
+            rot: q.rot, z: q.z, scale: q.scale, carried: true, riding: true, hand: r.hand, drag: d, peeking: !!r.peeking, ...(r.pile ? { pile: r.pile } : {}),
           });
         });
       } else if (d.cards) {
@@ -373,7 +374,7 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
       // a carried card shows whichever side its carrier will put down; someone else's card
       // held face up over a third player's hand is shown to that player only
       const dr = pl.carried ? pl.drag : null;
-      if (dr?.faceUp != null && (dr.local || !pl.riding || !pl.hand)) {
+      if (dr?.faceUp != null && !(pl.riding && pl.peeking) && (dr.local || !pl.riding || !pl.hand)) {
         let up = dr.faceUp;
         if (!dr.local && dr.from?.hand && dr.target?.hand && dr.target.hand !== dr.seat && dr.target.hand !== viewer) up = false;
         look = up ? "face" : "back";
@@ -460,7 +461,8 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
       // rebuilt only when what it says changes
       if (plate.__sig !== label + edit) {
         plate.__sig = label + edit;
-        plate.replaceChildren(label);
+        plate.replaceChildren();
+        el("span", "ct-plate-name", plate).textContent = label;
         // your own seat has a pencil for changing your name and color
         if (edit) {
           const b = el("button", "ct-plate-edit", plate);
@@ -602,20 +604,28 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
   // moving (each hand's area has its own).
   function renderEyes(st, place, o) {
     const K = keyed(eyeLayer);
+    // a stack you're looking through has one eye, on the last card in its row as drawn (the
+    // card you're moving through it, when that's the one)
+    const peekEye = new Map();
+    for (const [id, pl] of place) if (pl.peeking && pl.pile && !(pl.z < place.get(peekEye.get(pl.pile))?.z)) peekEye.set(pl.pile, id);
     for (const [id, pl] of place) {
       const card = st.cards[id];
       let open, to = null;
       const isTop = pl.pile && st.piles[pl.pile]?.cards.at(-1) === id;
       if (pl.carried) {
-        if ((pl.riding && pl.hand) || !pl.drag?.local) continue;
-        // a whole stack carried into a row: one eye, on its top card
-        if (pl.drag.whole && st.piles[pl.drag.pile]?.cards.at(-1) !== id) continue;
-        open = o.drag?.faceUp != null ? o.drag.faceUp : card.faceUp;
-        // held over another player's hand: flipped, it's shown to just them
-        if (o.drag?.from?.hand && o.target?.hand && o.target.hand !== viewer) to = seatOf(st, o.target.hand)?.seat;
+        if (pl.riding && pl.peeking) {
+          if (peekEye.get(pl.pile) !== id) continue;
+          open = false;
+        } else {
+          if ((pl.riding && pl.hand) || !pl.drag?.local) continue;
+          // a whole stack carried into a row: one eye, on its top card
+          if (pl.drag.whole && st.piles[pl.drag.pile]?.cards.at(-1) !== id) continue;
+          open = o.drag?.faceUp != null ? o.drag.faceUp : card.faceUp;
+          // held over another player's hand: flipped, it's shown to just them
+          if (o.drag?.from?.hand && o.target?.hand && o.target.hand !== viewer) to = seatOf(st, o.target.hand)?.seat;
+        }
       } else if (pl.peeking) {
-        // a stack you're looking through: one eye, on its top card
-        if (!isTop) continue;
+        if (peekEye.get(pl.pile) !== id) continue;
         open = false;
       } else if (pl.lifted && pl.drag?.local) {
         // a whole stack you're carrying: one eye on its top card, for what everyone sees of it

@@ -291,6 +291,13 @@ function refresh(t) {
 const isStack = (t) => !t.hand && state.piles[t.pile]?.cards.length > 1;
 const spreadNow = (p) => p.look === "spread" || peeking.has(p.id);
 const isSpread = (t) => isStack(t) && spreadNow(state.piles[t.pile]);
+// the middle of a stack you're looking through (a spread row opens out around its middle)
+function peekCenter(p) {
+  const half = p.look === "spread" ? ((p.cards.length - 1) * spreadGap(p.cards.length)) / 2 : 0;
+  return { x: p.x + Math.cos(p.rot) * half, y: p.y + Math.sin(p.rot) * half };
+}
+// where cards are drawn on your screen right now (stacks you're looking through spread out)
+const placeNow = () => view.placement(state, { peekSpread: peeking });
 function togglePeekStack(pileId) {
   if (peeking.has(pileId)) peeking.delete(pileId); else peeking.add(pileId);
   sendPeek();
@@ -316,7 +323,7 @@ function onFelt(x, y, rot = 0, len = 0) {
 // where carried cards would land if dropped at (x, y), in table coordinates
 function dropTarget(x, y) {
   const carried = new Set(drag.cards ?? state.piles[drag.pile].cards);
-  const place = view.placement(state);
+  const place = placeNow();
   // onto a stack: the pointer over its top card (any card, when it's spread) or its count tab
   let best = null, bestD = Infinity;
   const down = view.screenDir(0, 1), reach = GRIP_REACH;
@@ -326,7 +333,20 @@ function dropTarget(x, y) {
     if (!rest.length) continue;
     // a spread stack takes the card at the gap the pointer is over, like a hand: after every card
     // whose visible strip's middle it's past
-    if (p.look === "spread" && !peeking.has(p.id)) {
+    // a stack you're looking through, the same way: it's spread facing you, centered where it lies
+    if (peeking.has(p.id)) {
+      const k = rest.length, nIn = carried.size, g = spreadGap(k + nIn), rot = view.uprightRot();
+      const c = Math.cos(rot), s = Math.sin(rot), m = peekCenter(p);
+      const lx = (x - m.x) * c + (y - m.y) * s, ly = -(x - m.x) * s + (y - m.y) * c;
+      if (Math.abs(ly) < CARD_H / 2 + 8 && Math.abs(lx) < ((k + nIn - 1) * g) / 2 + CARD_W / 2 + 8) {
+        const slot = Math.max(0, Math.min(k, Math.round(lx / g + (k + nIn - 1) / 2 - (nIn - 1) / 2)));
+        const index = slot < k ? p.cards.indexOf(rest[slot]) : p.cards.length;
+        const d = Math.abs(ly) / 4;
+        if (d < bestD) { bestD = d; best = { pile: p.id, slot, index }; }
+      }
+      continue;
+    }
+    if (p.look === "spread") {
       // the slot comes from the row as it's drawn with the carried cards in it (k + n cards, so
       // spaced a little tighter): the one that puts the middle of what you carry under the pointer
       const k = rest.length, nIn = carried.size, g = spreadGap(k + nIn), c = Math.cos(p.rot), s = Math.sin(p.rot);
@@ -438,7 +458,7 @@ tableEl.addEventListener("pointermove", (e) => {
 
 function startDrag(t, at) {
   hovered = null;
-  const place = view.placement(state);
+  const place = placeNow();
   if (t.whole) {
     const pile = state.piles[t.pile];
     drag = { active: true, whole: true, pile: t.pile, rot: pile.rot, offX: pile.x - at.x, offY: pile.y - at.y };
@@ -986,4 +1006,5 @@ window.cardTable = {
     session.replace(st);
   },
   cardSize: [CARD_W, CARD_H],
+  get drag() { return drag; },
 };
