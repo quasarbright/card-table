@@ -1,8 +1,8 @@
 // The page: one shared table, played by hand. Pointer and keyboard input turn into table
 // actions (see table.mjs). A session (sync.mjs) applies them and keeps every player's table the
 // same; while you drag, where your cards are is streamed to everyone else as it happens.
-import { newTable, apply, shuffledOrder, locate, handCenter, seatAngle, seatSpot, seatRoom, clampToFelt, handLocked, chipHand, handChips, MAX_SEATS, RANKS, SUITS, CARD_W, CARD_H, CY, FELT_H, RAIL } from "./table.mjs";
-import { createView, HAND_R, OWN_HAND_R, GRIP_REACH, handGap, handReach, spreadGap, eyeSVG, chipRowWidth, cardRoom } from "./view.mjs";
+import { newTable, apply, shuffledOrder, locate, handCenter, seatAngle, seatSpot, seatRoom, clampToFelt, handLocked, chipHand, handChips, MAX_SEATS, RANKS, SUITS, CARD_W, CARD_H, CX, CY, FELT_H, RAIL } from "./table.mjs";
+import { createView, HAND_R, OWN_HAND_R, GRIP_REACH, handGap, handReach, spreadGap, eyeSVG, chipRowWidth, cardRoom, CHIP_STEP } from "./view.mjs";
 import { suitDefs } from "./faces.mjs";
 import { startAboutDiagram } from "./about.mjs";
 import { connect } from "./net.mjs";
@@ -254,11 +254,11 @@ document.getElementById("gather").addEventListener("click", () => {
   dispatch({ type: "gather", id: newId(), x: 500, y: 500, rot: view.uprightRot() });
 });
 document.getElementById("share").addEventListener("click", (e) => openShare(e.currentTarget));
-// the host's chips for everyone: the counter opens over the button
+// the host's new chips: the counter opens over the button
 document.getElementById("chips").addEventListener("click", (e) => {
   const r = e.currentTarget.getBoundingClientRect();
-  openMenu({ felt: true, at: null }, r.left, r.top - 260);
-  if (menu) showNewChips(null);
+  openMenu({ felt: true }, r.left, r.top - 240);
+  showNewChips();
 });
 
 // ---- helpers -------------------------------------------------------------------------------
@@ -545,13 +545,7 @@ tableEl.addEventListener("pointerup", (e) => {
   const d = drag; drag = null;
   sendDrag();
   const to = d.target;
-  if (d.chip) {
-    // onto a stack (they join), into a hand (at the end of its chips), or down on the felt
-    const at = to?.stack ? { stack: to.stack } : to?.hand ? { hand: to.hand } : onFelt(d.x, d.y);
-    if (to?.hand && chipHand(state, d.chip) === to.hand) { draw(); return; }
-    dispatch({ type: "moveChips", id: d.chip, to: at });
-    return;
-  }
+  if (d.chip) return dropChips(d);
   // two face-up cards put together start a stack that lies spread out, so both stay readable
   const startsSpread = (pileId, landingFaceUp) => {
     const p = state.piles[pileId];
@@ -584,6 +578,14 @@ tableEl.addEventListener("pointerup", (e) => {
     dispatch(act);
   }
 });
+// carried chips, let go: onto a stack (they join), into a hand (at the end of its chips), or down
+// on the felt
+function dropChips(d) {
+  const to = d.target;
+  const at = to?.stack ? { stack: to.stack } : to?.hand ? { hand: to.hand } : onFelt(d.x, d.y);
+  if (to?.hand && chipHand(state, d.chip) === to.hand) { draw(); return; }
+  dispatch({ type: "moveChips", id: d.chip, to: at });
+}
 tableEl.addEventListener("pointercancel", (e) => {
   if (drag && e.pointerId !== drag.pointerId) return;
   clearTimeout(pending?.timer); pending = null; drag = null; draw(); sendDrag();
@@ -600,10 +602,7 @@ tableEl.addEventListener("contextmenu", (e) => {
   e.preventDefault();
   if (drag) return;
   const t = seated() ? targetOf(e.target) : null;
-  if (t) openMenu(t, e.clientX, e.clientY);
-  // the host right-clicking the felt: new chips there
-  else if (session?.isHost && e.target.closest?.(".ct-felt")) openMenu({ felt: true, at: view.toTable(e.clientX, e.clientY) }, e.clientX, e.clientY);
-  else closeMenu();
+  if (t) openMenu(t, e.clientX, e.clientY); else closeMenu();
 });
 
 // ---- the actions, as the menu and keys offer them -----------------------------------------
@@ -671,7 +670,7 @@ function openMenu(t, x, y) {
   const item = (label, key, fn, keepOpen = false) => items.push({ label, key, fn, keepOpen });
   const sep = () => { if (items.length && items.at(-1)) items.push(null); };
   if (t.chip) chipItems(t, item, sep);
-  if (t.felt) feltItems(t, item);
+  if (t.felt) item("New chips…", "", () => {}, true); // (replaced by the counter right away)
   const pile = t.pile ? state.piles[t.pile] : null;
   const c = t.card ? state.cards[t.card] : null;
   const look = () => item(c.privateTo === me ? "Stop peeking" : isStack(t) && !isSpread(t) ? "Peek top card" : "Peek", "P", () => toggleLook(t));
@@ -844,36 +843,34 @@ const players = () => state.seats.filter((x) => x.player);
 // a chip stack's menu: take some into your hand, split it, deal from it; the host can also take
 // it off the table for good
 function chipItems(t, item, sep) {
-  const c = state.chips[t.chip], inMine = t.chipHand === me;
-  if (!inMine && c.amount > 1) item("Take…", "", () => showChips(t.chip, "take"), true);
-  else if (!inMine) item("Take", "", () => dispatch({ type: "moveChips", id: t.chip, to: { hand: me } }));
-  if (c.amount > 1) item("Split…", "", () => showChips(t.chip, "split"), true);
-  if (c.amount >= players().length && players().length > 1) item("Deal…", "", () => showChips(t.chip, "deal"), true);
+  const c = state.chips[t.chip];
+  // take some off into a stack of their own beside it; split it into even stacks; deal from it
+  if (c.amount > 1) {
+    item("Take…", "", () => showChips(t.chip, "take"), true);
+    item("Split…", "", () => showChips(t.chip, "split"), true);
+  }
+  if (c.amount >= Math.max(1, players().length)) item("Deal…", "", () => showChips(t.chip, "deal"), true);
   if (session?.isHost) { sep(); item("Remove chips", "", () => dispatch({ type: "removeChips", id: t.chip })); }
 }
-// the empty felt's menu, for the host: new chips
-function feltItems(t, item) {
-  if (session?.isHost) item("New chips…", "", () => showNewChips(t.at), true);
-}
-// (the bar's New chips button skips the menu and opens the counter itself)
 
-let chipAmounts = { take: 10, split: 0, deal: 100, make: 1000 };
+let chipAmounts = { take: 10, deal: 100, make: 1000 };
 function showChips(id, what) {
   const c = state.chips[id], total = c.amount, ps = players();
   const each = Math.max(1, Math.floor(total / Math.max(1, ps.length)));
   if (what === "take") {
     counter({
-      title: `Take some of these ${fmt(total)} into your hand`, typed: true,
-      value: Math.min(chipAmounts.take, total), min: 1, max: total, unit: () => "",
-      presets: [{ label: "Half", value: Math.round(total / 2) }, { label: "All", value: total }],
-      buttons: [{ primary: true, data: "take", label: (v) => `Take ${fmt(v)}`, run: (v) => { chipAmounts.take = v; takeChips(id, v, { hand: me }); } }],
+      title: `Take some of these ${fmt(total)} off into a new stack beside them`, typed: true,
+      value: Math.min(chipAmounts.take, total - 1), min: 1, max: total - 1, unit: () => "",
+      presets: [{ label: "Half", value: Math.floor(total / 2) }],
+      buttons: [{ primary: true, data: "take", label: (v) => `Take ${fmt(v)}`, run: (v) => { chipAmounts.take = v; takeBeside(id, v); } }],
     });
   } else if (what === "split") {
+    // as a stack of cards splits: into even stacks, side by side
+    const max = Math.min(total, 8);
     counter({
-      title: `Split ${fmt(total)} into two stacks: how many go in the new one`, typed: true,
-      value: chipAmounts.split > 0 && chipAmounts.split < total ? chipAmounts.split : Math.floor(total / 2), min: 1, max: total - 1, unit: () => "",
-      presets: [{ label: "Half", value: Math.floor(total / 2) }],
-      buttons: [{ primary: true, data: "split", label: (v) => `Split off ${fmt(v)}`, run: (v) => { chipAmounts.split = v; splitChips(id, v); } }],
+      title: "Cut into even stacks, side by side",
+      value: Math.max(2, Math.min(splitCount, max)), min: 2, max, unit: () => "stacks",
+      buttons: [{ primary: true, data: "split", label: (v) => `Split into ${v}`, run: (v) => { splitCount = v; splitChips(id, v); } }],
     });
   } else {
     counter({
@@ -884,15 +881,34 @@ function showChips(id, what) {
     });
   }
 }
-function takeChips(id, amount, to) {
-  dispatch({ type: "takeChips", from: id, amount, id: newId(), to });
+// some off a stack, as a new stack beside it: in a hand, just to its right; on the felt, to its
+// right on your screen, past any stack already there
+function takeBeside(id, amount) {
+  const c = state.chips[id], hand = chipHand(state, id);
+  if (hand) return dispatch({ type: "takeChips", from: id, amount, id: newId(), to: { hand, index: handChips(state, hand).indexOf(id) + 1 } });
+  const r = view.screenDir(1, 0), gap = CHIP_STEP + 6;
+  const taken = (p) => Object.values(state.chips).some((o) => o.id !== id && !chipHand(state, o.id) && Math.hypot(o.x - p.x, o.y - p.y) < gap * 0.6);
+  let spot = null;
+  for (let k = 1; k < 12 && (!spot || taken(spot)); k++) spot = clampToFelt(c.x + r.x * gap * k, c.y + r.y * gap * k, 70);
+  dispatch({ type: "takeChips", from: id, amount, id: newId(), to: spot });
 }
-// the new stack goes beside the old one: on the table, just to its right; in a hand, next to it
-function splitChips(id, amount) {
-  const hand = chipHand(state, id);
-  if (hand) return takeChips(id, amount, { hand, index: handChips(state, hand).indexOf(id) + 1 });
-  const c = state.chips[id], r = view.screenDir(1, 0);
-  takeChips(id, amount, onFelt(c.x + r.x * 56, c.y + r.y * 56));
+// n stacks as even as whole chips allow (the first ones a chip bigger), side by side: in a hand,
+// next to each other where the stack was; on the felt, in a row across your view centered where it
+// was, like a split stack of cards
+function splitChips(id, n) {
+  const c = state.chips[id], hand = chipHand(state, id);
+  const sizes = Array.from({ length: n }, (_, k) => Math.floor(c.amount / n) + (k < c.amount % n ? 1 : 0));
+  const acts = [];
+  if (hand) {
+    const i = handChips(state, hand).indexOf(id);
+    for (let k = 1; k < n; k++) acts.push({ type: "takeChips", from: id, amount: sizes[k], id: newId(), to: { hand, index: i + k } });
+  } else {
+    const r = view.screenDir(1, 0), gap = CHIP_STEP + 6;
+    const spot = (k) => clampToFelt(c.x + r.x * (k - (n - 1) / 2) * gap, c.y + r.y * (k - (n - 1) / 2) * gap, 70);
+    acts.push({ type: "moveChips", id, to: spot(0) });
+    for (let k = 1; k < n; k++) acts.push({ type: "takeChips", from: id, amount: sizes[k], id: newId(), to: spot(k) });
+  }
+  dispatch({ type: "batch", actions: acts });
 }
 // around the table from the player after you, as cards are dealt
 function dealChips(id, amount) {
@@ -900,22 +916,18 @@ function dealChips(id, amount) {
   const seats = Array.from({ length: n }, (_, k) => state.seats[(mi + 1 + k) % n]).filter((x) => x.player).map((x) => x.id);
   dispatch({ type: "dealChips", from: id, amount, seats, ids: seats.map(() => newId()) });
 }
-// the host's new chips: on the felt where they clicked, or the same amount in every player's hand
-function showNewChips(at) {
+// the host's new chips go in the middle, beside the deck (onto the stack already there, if any)
+const BANK = { x: CX + 120, y: CY };
+function showNewChips() {
   counter({
-    title: "New chips", typed: true,
+    title: "New chips, in the middle", typed: true,
     value: chipAmounts.make, min: 1, max: 1e7, unit: () => "",
     presets: [100, 500, 1000].map((v) => ({ label: fmt(v), value: v })),
-    buttons: [
-      { primary: true, data: "makeEach", label: (v) => `Give each player ${fmt(v)}`, run: (v) => {
-        chipAmounts.make = v;
-        dispatch({ type: "batch", actions: players().map((x) => ({ type: "makeChips", id: newId(), amount: v, to: { hand: x.id } })) });
-      } },
-      ...(at ? [{ data: "makeHere", label: (v) => `Put ${fmt(v)} here`, run: (v) => {
-        chipAmounts.make = v;
-        dispatch({ type: "makeChips", id: newId(), amount: v, to: onFelt(at.x, at.y) });
-      } }] : []),
-    ],
+    buttons: [{ primary: true, data: "make", label: (v) => `Put ${fmt(v)} in the middle`, run: (v) => {
+      chipAmounts.make = v;
+      const there = Object.values(state.chips ?? {}).find((c) => !chipHand(state, c.id) && Math.hypot(c.x - BANK.x, c.y - BANK.y) < 4);
+      dispatch({ type: "makeChips", id: newId(), amount: v, to: there ? { stack: there.id } : BANK });
+    } }],
   });
 }
 

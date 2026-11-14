@@ -485,7 +485,7 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
     const place = chipPlacement(st, o);
     const live = new Set();
     for (const [id, pl] of place) {
-      const chips = st.chips[id];
+      const amount = st.chips[id].amount;
       live.add(id);
       let e = chipEls.get(id);
       if (!e) {
@@ -495,8 +495,8 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
         el("div", "ct-chips-amt", e);
         chipEls.set(id, e);
       }
-      setHTML(e.firstChild, chipArt(chips.amount));
-      setText(e.children[1], chips.amount.toLocaleString("en-US"));
+      setHTML(e.firstChild, chipArt(amount));
+      setText(e.children[1], amount.toLocaleString("en-US"));
       e.style.zIndex = pl.z;
       // standing up on screen, whichever way the table is turned
       e.style.transform = `translate(${pl.x}px, ${pl.y}px) rotate(${-frame.rot * DEG}deg) scale(${pl.carried ? 1.08 : 1})`;
