@@ -1,6 +1,7 @@
 // Real mouse and keyboard input on the table, checked against the table state.
 import { test, expect } from "@playwright/test";
 import { serveFromCache } from "./helpers.mjs";
+import { CX, CY, clampToFelt } from "../table.mjs";
 
 async function open(page) {
   const errors = [];
@@ -42,17 +43,19 @@ async function dragTo(page, from, to) {
 }
 // a point on the table, in screen coordinates
 const at = (page, x, y) => page.evaluate(([x, y]) => window.cardTable.view.toScreen(x, y), [x, y]);
+// the middle of a seat's hand area, on screen
+const handAt = (page, i) => center(page, `.ct-zone >> nth=${i}`);
 const showsFace = (page, id) => page.locator(`${cardSel(id)} .ct-index`).count().then((n) => n > 0);
 
 test("drag the top card off the deck, then click it and pick Flip", async ({ page }) => {
   const errors = await open(page);
   const top = await topOf(page, "deck");
-  await dragTo(page, await center(page, cardSel(top)), await at(page, 300, 350));
+  await dragTo(page, await center(page, cardSel(top)), await at(page, CX - 200, CY - 90));
   let s = await state(page);
   expect(s.piles.deck.cards.length).toBe(51);
   const pile = Object.values(s.piles).find((p) => p.cards.includes(top));
   expect(pile.id).not.toBe("deck");
-  expect(Math.hypot(pile.x - 300, pile.y - 350)).toBeLessThan(15);
+  expect(Math.hypot(pile.x - (CX - 200), pile.y - (CY - 90))).toBeLessThan(15);
   expect(await showsFace(page, top)).toBe(false);
   // a drag doesn't leave a menu behind
   await expect(page.locator(".ct-menu")).toHaveCount(0);
@@ -74,15 +77,15 @@ test("drag the top card off the deck, then click it and pick Flip", async ({ pag
 
 test("a card or stack dropped off the felt comes back onto it", async ({ page }) => {
   const errors = await open(page);
-  const R = 500, lim = 440 - 50;
-  // a card, dropped in the corner of the screen
+  // a card, dropped in the corner of the screen: it lands in the felt's corner
   const top = await topOf(page, "deck");
   const vp = page.viewportSize();
   await dragTo(page, await center(page, cardSel(top)), { x: vp.width - 10, y: 10 });
   let s = await state(page);
   const pile = Object.values(s.piles).find((p) => p.cards.includes(top));
-  expect(Math.hypot(pile.x - R, pile.y - R)).toBeLessThanOrEqual(lim + 0.5);
-  expect(Math.hypot(pile.x - R, pile.y - R)).toBeGreaterThan(lim - 5);
+  const on = clampToFelt(pile.x, pile.y);
+  expect(Math.hypot(on.x - pile.x, on.y - pile.y)).toBeLessThan(0.5);
+  expect(pile.x).toBeGreaterThan(CX + 300); expect(pile.y).toBeLessThan(CY - 150);
   // the whole deck, spread out, dropped off the bottom left: the whole row comes back on
   await page.evaluate(() => window.cardTable.dispatch({ type: "setLook", pile: "deck", look: "spread" }));
   await settle(page);
@@ -92,21 +95,24 @@ test("a card or stack dropped off the felt comes back onto it", async ({ page })
   await settle(page);
   s = await state(page);
   const d = s.piles.deck, len = 600;
-  for (const t of [0, len]) expect(Math.hypot(d.x + Math.cos(d.rot) * t - R, d.y + Math.sin(d.rot) * t - R)).toBeLessThanOrEqual(lim + 1);
+  for (const t of [0, len]) {
+    const x = d.x + Math.cos(d.rot) * t, y = d.y + Math.sin(d.rot) * t, c = clampToFelt(x, y, 49);
+    expect(Math.hypot(c.x - x, c.y - y)).toBeLessThan(1);
+  }
   expect(errors).toEqual([]);
 });
 
 test("a card dragged into your hand shows you its face and others its back", async ({ page }) => {
   const errors = await open(page);
   const top = await topOf(page, "deck");
-  await dragTo(page, await center(page, cardSel(top)), await at(page, 500, 870));
+  await dragTo(page, await center(page, cardSel(top)), await handAt(page, 0));
   expect((await state(page)).hands.s0).toEqual([top]);
   expect(await showsFace(page, top)).toBe(true);
   await page.click('#viewer [data-seat="s1"]');
   await page.waitForTimeout(700);
   expect(await showsFace(page, top)).toBe(false);
   // pass it to Player 3's hand, as Player 2
-  const p3 = await page.evaluate(() => { const v = window.cardTable.view; return v.toScreen(500, 500 - 378); });
+  const p3 = await handAt(page, 2);
   await dragTo(page, await center(page, cardSel(top)), p3);
   expect((await state(page)).hands.s2).toEqual([top]);
   expect(errors).toEqual([]);
@@ -228,10 +234,10 @@ test("click opens the actions, a second click closes them", async ({ page }) => 
 
 test("dragging the count moves the whole stack", async ({ page }) => {
   await open(page);
-  await dragTo(page, await center(page, ".ct-grip"), await at(page, 650, 400));
+  await dragTo(page, await center(page, ".ct-grip"), await at(page, CX + 150, CY - 60));
   const s = await state(page);
   expect(s.piles.deck.cards.length).toBe(52);
-  expect(Math.hypot(s.piles.deck.x - 650, s.piles.deck.y - 400)).toBeLessThan(80);
+  expect(Math.hypot(s.piles.deck.x - (CX + 150), s.piles.deck.y - (CY - 60))).toBeLessThan(80);
 });
 
 test("the table survives a reload; gather brings everything back", async ({ page }) => {
@@ -295,13 +301,13 @@ test("press and hold a stack, then drag: the whole stack moves", async ({ page }
   await page.mouse.move(c.x, c.y);
   await page.mouse.down();
   await page.waitForTimeout(450);
-  const to = await at(page, 650, 420);
+  const to = await at(page, CX + 150, CY - 48);
   await page.mouse.move(to.x, to.y, { steps: 8 });
   await page.mouse.up();
   await settle(page);
   const s = await state(page);
   expect(s.piles.deck.cards).toHaveLength(52);
-  expect(Math.hypot(s.piles.deck.x - 650, s.piles.deck.y - 420)).toBeLessThan(20);
+  expect(Math.hypot(s.piles.deck.x - (CX + 150), s.piles.deck.y - (CY - 48))).toBeLessThan(20);
 });
 
 test("F while dragging flips what you carry", async ({ page }) => {
@@ -314,7 +320,7 @@ test("F while dragging flips what you carry", async ({ page }) => {
   await page.keyboard.press("f");
   await page.waitForTimeout(150);
   expect(await showsFace(page, top)).toBe(true);
-  const to = await at(page, 330, 380);
+  const to = await at(page, CX - 170, CY - 72);
   await page.mouse.move(to.x, to.y, { steps: 6 });
   await page.mouse.up();
   await settle(page);
@@ -377,13 +383,13 @@ test("undo, from the button and the keyboard", async ({ page }) => {
   await open(page);
   await expect(page.locator("#undo")).toBeDisabled();
   const top = await topOf(page, "deck");
-  await dragTo(page, await center(page, cardSel(top)), await at(page, 330, 380));
+  await dragTo(page, await center(page, cardSel(top)), await at(page, CX - 170, CY - 72));
   expect((await state(page)).piles.deck.cards).toHaveLength(51);
   await page.click("#undo");
   await settle(page);
   expect((await state(page)).piles.deck.cards).toHaveLength(52);
   await expect(page.locator("#undo")).toBeDisabled();
-  await dragTo(page, await center(page, cardSel(top)), await at(page, 330, 380));
+  await dragTo(page, await center(page, cardSel(top)), await at(page, CX - 170, CY - 72));
   await page.keyboard.press("ControlOrMeta+Z");
   expect((await state(page)).piles.deck.cards).toHaveLength(52);
 });
@@ -419,7 +425,7 @@ test("carried over another hand a card is hidden until flipped for them; droppin
   await page.mouse.move(...Object.values(await center(page, cardSel(id))));
   await page.mouse.down();
   // over Player 2's hand (to your left)
-  const p2 = await page.evaluate(() => window.cardTable.view.toScreen(500 - 378, 500));
+  const p2 = await handAt(page, 1);
   await page.mouse.move(p2.x, p2.y, { steps: 12 });
   await page.waitForTimeout(300);
   expect(await showsFace(page, id)).toBe(false);
@@ -439,13 +445,13 @@ test("a card carried out of your hand goes down face up, or face down if flipped
   await settle(page);
   const [a, , c] = (await state(page)).hands.s0;
   const last = await center(page, cardSel(c));
-  await dragTo(page, last, await at(page, 330, 380));
+  await dragTo(page, last, await at(page, CX - 170, CY - 72));
   expect((await state(page)).cards[c].faceUp).toBe(true);
   // the first card's uncovered strip; flip it while carrying
   const b = await page.locator(cardSel(a)).boundingBox();
   await page.mouse.move(b.x + 10, b.y + b.height * 0.35);
   await page.mouse.down();
-  const to = await at(page, 650, 380);
+  const to = await at(page, CX + 150, CY - 72);
   await page.mouse.move(to.x, to.y, { steps: 8 });
   await expect(page.locator(".ct-eye.ct-eye-open:not(.ct-zone-eye)")).toHaveCount(1);
   await page.keyboard.press("f");
@@ -475,7 +481,7 @@ test("Show top few and Spread stack; Straighten stack squares either up", async 
   const deck = (await state(page)).piles.deck.cards;
   const mid = deck[20];
   const b = await page.locator(cardSel(mid)).boundingBox();
-  await dragTo(page, { x: b.x + 4, y: b.y + b.height / 2 }, await at(page, 500, 700));
+  await dragTo(page, { x: b.x + 4, y: b.y + b.height / 2 }, await at(page, CX, CY + 120));
   const s = await state(page);
   expect(s.piles.deck.cards).not.toContain(mid);
   expect(s.piles.deck.cards).toHaveLength(51);
@@ -508,7 +514,7 @@ test("Drop hand puts your hand on the table face down, spread out", async ({ pag
   expect(pile.look).toBe("spread");
   for (const id of hand) expect(s.cards[id].faceUp).toBe(false);
   // in front of you: between your seat and the middle
-  expect(pile.y).toBeGreaterThan(500);
+  expect(pile.y).toBeGreaterThan(CY);
   await page.click("#undo");
   expect((await state(page)).hands.s0).toEqual(hand);
   expect(errors).toEqual([]);
@@ -536,7 +542,7 @@ test("Peek stack spreads it face up on your screen only; the table doesn't chang
   // a card in the middle can be taken out on its own
   const mid = deck[30];
   const b = await page.locator(cardSel(mid)).boundingBox();
-  await dragTo(page, { x: b.x + 4, y: b.y + b.height / 2 }, await at(page, 500, 720));
+  await dragTo(page, { x: b.x + 4, y: b.y + b.height / 2 }, await at(page, CX, CY + 132));
   expect((await state(page)).piles.deck.cards).not.toContain(mid);
   await page.keyboard.press("Escape");
   await settle(page);
@@ -553,8 +559,8 @@ test("a face-up card dropped on another face-up card starts a spread stack", asy
   await page.evaluate(([a, b]) => {
     const t = window.cardTable;
     t.dispatch({ type: "batch", actions: [
-      { type: "moveCards", cards: [a], to: { newPile: { id: "one", x: 330, y: 400 } } }, { type: "flip", cards: [a] },
-      { type: "moveCards", cards: [b], to: { newPile: { id: "two", x: 660, y: 400 } } }, { type: "flip", cards: [b] },
+      { type: "moveCards", cards: [a], to: { newPile: { id: "one", x: 380, y: 270 } } }, { type: "flip", cards: [a] },
+      { type: "moveCards", cards: [b], to: { newPile: { id: "two", x: 710, y: 270 } } }, { type: "flip", cards: [b] },
     ] });
   }, [a, b]);
   await settle(page);
@@ -565,7 +571,7 @@ test("a face-up card dropped on another face-up card starts a spread stack", asy
   expect(pile.look).toBe("spread");
   // a face-down card on a face-down card makes an ordinary stack
   const c = s.piles.deck.cards.at(-1);
-  await dragTo(page, await center(page, cardSel(c)), await at(page, 500, 720));
+  await dragTo(page, await center(page, cardSel(c)), await at(page, CX, CY + 132));
   const d = (await state(page)).piles.deck.cards.at(-1);
   await dragTo(page, await center(page, cardSel(d)), await center(page, cardSel(c)));
   const p2 = Object.values((await state(page)).piles).find((p) => p.cards.includes(c));
@@ -579,7 +585,7 @@ test("a card carried over a spread stack goes into the gap it opens; on top, the
   await page.evaluate(() => {
     const t = window.cardTable, six = t.state.piles.deck.cards.slice(-6);
     t.dispatch({ type: "batch", actions: [
-      { type: "moveCards", cards: six, to: { newPile: { id: "row", x: 330, y: 380, rot: t.view.uprightRot() } } },
+      { type: "moveCards", cards: six, to: { newPile: { id: "row", x: 330, y: 260, rot: t.view.uprightRot() } } },
       { type: "flip", cards: six }, { type: "setLook", pile: "row", look: "spread" },
     ] });
   });
@@ -619,10 +625,10 @@ test("a whole stack carried over a spread stack opens a gap its size and goes in
   await page.evaluate(() => {
     const t = window.cardTable, d = t.state.piles.deck.cards;
     t.dispatch({ type: "batch", actions: [
-      { type: "moveCards", cards: d.slice(-5), to: { newPile: { id: "row", x: 300, y: 360, rot: t.view.uprightRot() } } },
+      { type: "moveCards", cards: d.slice(-5), to: { newPile: { id: "row", x: 300, y: 250, rot: t.view.uprightRot() } } },
       { type: "flip", cards: d.slice(-5) }, { type: "setLook", pile: "row", look: "spread" },
       // a spread stack of three to carry in
-      { type: "moveCards", cards: d.slice(-8, -5), to: { newPile: { id: "three", x: 560, y: 640, rot: t.view.uprightRot() } } },
+      { type: "moveCards", cards: d.slice(-8, -5), to: { newPile: { id: "three", x: 450, y: 420, rot: t.view.uprightRot() } } },
       { type: "flip", cards: d.slice(-8, -5) }, { type: "setLook", pile: "three", look: "spread" },
     ] });
   });

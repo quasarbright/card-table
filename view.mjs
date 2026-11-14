@@ -2,13 +2,16 @@
 // renders; each one springs toward where it belongs every frame, so every move (a deal, a hand
 // opening a gap, a dragged card) is continuous. The same view runs the main table and the small
 // tables in the about modal.
-import { TABLE_R, FELT_R, CARD_W, CARD_H, seatAngle, handCenter, canSee, tiltedToward, locate, handLocked } from "./table.mjs";
+import { TABLE_W, TABLE_H, CX, CY, FELT_H, RAIL, CARD_W, CARD_H, seatAngle, seatSpot, seatRoom, handCenter, canSee, tiltedToward, locate, handLocked } from "./table.mjs";
 import { faceSVG, backSVG } from "./faces.mjs";
 
 const DEG = 180 / Math.PI;
-export const HAND_R = FELT_R - 62;          // where other seats' hands sit
-export const OWN_HAND_R = FELT_R - 66;      // the viewer's own hand, a bit closer to them and bigger
+export const HAND_R = FELT_H / 2 - 62;      // how far out from the middle line other seats' hands sit
+export const OWN_HAND_R = FELT_H / 2 - 66;  // the viewer's own hand, a bit closer to them and bigger
 export const GRIP_REACH = CARD_H / 2 + 17; // from a stack's middle to its count tab
+// a hand area's corners round by 22; a badge on a corner sits on that curve, this far in from
+// the corner of the box on each side
+const CORNER_IN = 22 * (1 - Math.SQRT1_2);
 const HELD_TILT = 38, LOOK_TILT = 28; // degrees: a held card, a face-down card being looked at
 const TURN_MS = 220, STACK_TURN_MS = 460;
 const SLOT = "__slot";
@@ -23,18 +26,19 @@ function jitter(id, salt) {
   return ((h >>> 0) % 2001) / 1000 - 1;
 }
 
-// spacing between neighbors in a hand of k cards
-export function handGap(own, k, shown = false) {
+// spacing between neighbors in a hand of k cards, in a seat with `room` to spread across
+export function handGap(own, k, shown = false, room = Infinity) {
   // your own hand, held or shown, is spaced so every card is easy to pick out and drop
   // between; other held hands bunch up more
-  // (a big hand of yours spreads wider, up to 640, and its area grows with it)
-  if (own || shown) return Math.min(own ? 46 : 38, (own ? 640 : 300) / Math.max(1, k - 1));
-  return Math.min(20, 260 / Math.max(1, k - 1));
+  // (a big hand of yours spreads wider, up to 640 or the seat's room, and its area grows with it)
+  const fit = room - CARD_W - 44;
+  if (own || shown) return Math.min(own ? 46 : 38, Math.min(own ? 640 : 300, fit) / Math.max(1, k - 1));
+  return Math.min(20, Math.min(260, fit) / Math.max(1, k - 1));
 }
 // how far along and across from a hand's middle it still takes drops
-export function handReach(own, k, shown = false) {
-  const along = Math.max(0, k - 1) * handGap(own, k, shown) / 2 + CARD_W / 2 + 22;
-  return { along: Math.max(own ? 150 : 115, along), across: own ? 75 : 60 };
+export function handReach(own, k, shown = false, room = Infinity) {
+  const along = Math.max(0, k - 1) * handGap(own, k, shown, room) / 2 + CARD_W / 2 + 22;
+  return { along: Math.min(room / 2, Math.max(own ? 150 : 115, along)), across: own ? 75 : 60 };
 }
 
 export function createView(root, { viewer = "s0", interactive = true } = {}) {
@@ -50,7 +54,7 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
   const eyeLayer = el("div", "ct-eyes", stage);
   const zoneEyeLayer = el("div", "ct-eyes", stage);
   const slotEl = el("div", "ct-slot", cardLayer); // the gap a carried card would drop into
-  stage.style.width = stage.style.height = `${2 * TABLE_R}px`;
+  stage.style.width = `${TABLE_W}px`; stage.style.height = `${TABLE_H}px`;
 
   const cardEls = new Map();   // card id → element
   const shown = new Map();     // card id → "face" | "back" (what the viewer currently sees)
@@ -67,11 +71,11 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
       const b = root.getBoundingClientRect();
       const dx = (clientX - b.left - frame.cx) / frame.s, dy = (clientY - b.top - frame.cy) / frame.s;
       const c = Math.cos(-frame.rot), s = Math.sin(-frame.rot);
-      return { x: TABLE_R + dx * c - dy * s, y: TABLE_R + dx * s + dy * c };
+      return { x: CX + dx * c - dy * s, y: CY + dx * s + dy * c };
     },
     toScreen(x, y) {
       const b = root.getBoundingClientRect();
-      const dx = x - TABLE_R, dy = y - TABLE_R, c = Math.cos(frame.rot), s = Math.sin(frame.rot);
+      const dx = x - CX, dy = y - CY, c = Math.cos(frame.rot), s = Math.sin(frame.rot);
       return { x: b.left + frame.cx + (dx * c - dy * s) * frame.s, y: b.top + frame.cy + (dx * s + dy * c) * frame.s };
     },
     // the rotation (radians, table frame) that reads upright from the viewer's seat
@@ -89,16 +93,14 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
   function layout(reserveTop = 0, reserveBottom = 0) {
     const w = root.clientWidth, h = root.clientHeight;
     const availH = Math.max(100, h - reserveTop - reserveBottom);
-    // on a narrow screen keep the whole rail in view: the name plates sit on it
-    const fitW = w < 600 ? TABLE_R + 4 : FELT_R + 12;
-    const s = Math.min(w / (2 * fitW), availH / (2 * TABLE_R)) * 0.98;
+    const s = Math.min(w / TABLE_W, availH / TABLE_H) * 0.98;
     frame = { cx: w / 2, cy: reserveTop + availH / 2, s, rot: frame.rot };
     applyFrame();
   }
   function applyFrame() {
     stage.style.setProperty("--s", frame.s);
     stage.style.transform =
-      `translate(${frame.cx}px, ${frame.cy}px) scale(${frame.s}) rotate(${frame.rot * DEG}deg) translate(${-TABLE_R}px, ${-TABLE_R}px)`;
+      `translate(${frame.cx}px, ${frame.cy}px) scale(${frame.s}) rotate(${frame.rot * DEG}deg) translate(${-CX}px, ${-CY}px)`;
   }
 
   // every drag in progress: yours (o.drag) and other players' (o.remote: [{ seat, ... }])
@@ -205,7 +207,7 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
         const q = handSlot(si, n, own, i, list.length, reorder ? (side < 0 ? -1.2 : 0) : side, shown);
         if (id === SLOT) {
           if (reorder) {
-            const a = seatAngle(si, n), reach = handGap(own, list.length, shown) * 0.45;
+            const a = seatAngle(si, n), reach = handGap(own, list.length, shown, seatRoom(si, n)) * 0.45;
             rideIn(into, { ...q, z: 10000 + si * 100 + i },
               { hand: seat.id, right: { x: Math.sin(a), y: -Math.cos(a) }, up: { x: -Math.cos(a), y: -Math.sin(a) }, raise: 16, min: -reach, max: reach });
           }
@@ -241,9 +243,10 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
   function handSlot(si, n, own, i, k, aside = 0, shown = false) {
     const a = seatAngle(si, n);
     // a shown hand slides toward the middle so its cards' tops stick out of the hand's area
-    const hc = handCenter(si, n, (own ? OWN_HAND_R : HAND_R) - (shown ? handReach(own, k).across + 22 - CARD_H / 2 : 0));
+    const room = seatRoom(si, n);
+    const hc = handCenter(si, n, (own ? OWN_HAND_R : HAND_R) - (shown ? handReach(own, k, false, room).across + 22 - CARD_H / 2 : 0));
     const t = i - (k - 1) / 2;
-    const along = t * handGap(own, k, shown) + aside * (own ? 26 : 18);
+    const along = t * handGap(own, k, shown, room) + aside * (own ? 26 : 18);
     const fan = shown ? 0 : t * Math.min(4, 40 / Math.max(1, k)) / DEG;
     // a shallow arch: the same curve for any hand of a dozen or more, never deeper than 12
     const half = Math.max(1, (k - 1) / 2), u = t / half;
@@ -445,8 +448,8 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
     const n = st.seats.length;
     seatLayer.replaceChildren();
     st.seats.forEach((seat, i) => {
-      const a = seatAngle(i, n);
-      const r = (FELT_R + TABLE_R) / 2;
+      const { x: px, a } = seatSpot(i, n);
+      const r = (FELT_H + RAIL) / 2;
       const plate = el("div", "ct-plate", seatLayer);
       plate.dataset.seat = seat.id;
       plate.style.setProperty("--seat", seat.color);
@@ -461,17 +464,8 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
         b.type = "button"; b.title = "Change your name or color"; b.setAttribute("aria-label", b.title);
         b.innerHTML = `<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4z"/><path d="M14 6l4 4"/></svg>`;
       }
-      // level on screen; but on a narrow screen, seats at the sides run along the rail instead,
-      // turned whichever way reads upright
-      let turn = -frame.rot;
-      const onScreen = a + frame.rot;
-      if (root.clientWidth < 600 && Math.abs(Math.cos(onScreen)) > 0.5) {
-        let t = onScreen - Math.PI / 2;
-        t = Math.atan2(Math.sin(t), Math.cos(t));
-        if (Math.abs(t) > Math.PI / 2) t += Math.PI;
-        turn = t - frame.rot;
-      }
-      plate.style.transform = `translate(${TABLE_R + r * Math.cos(a)}px, ${TABLE_R + r * Math.sin(a)}px) rotate(${turn * DEG}deg) translate(-50%, -50%)`;
+      // on the rail in front of the seat, level on screen
+      plate.style.transform = `translate(${px}px, ${CY + r * Math.sin(a)}px) rotate(${-frame.rot * DEG}deg) translate(-50%, -50%)`;
       plate.classList.toggle("ct-me", seat.id === viewer);
     });
   }
@@ -525,7 +519,7 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
       const a = seatAngle(i, n);
       z.style.transform = `translate(${c.x}px, ${c.y}px) rotate(${(a - Math.PI / 2) * DEG}deg) translate(-50%, -50%)`;
       const incoming = o.target?.hand === seat.id ? Math.max(1, o.drag?.cards?.length ?? st.piles[o.drag?.pile]?.cards.length ?? 1) : 1;
-      const reach = handReach(own, st.hands[seat.id].length + incoming, !!st.shownHands?.[seat.id]);
+      const reach = handReach(own, st.hands[seat.id].length + incoming, !!st.shownHands?.[seat.id], seatRoom(i, n));
       z.style.width = `${2 * reach.along}px`; z.style.height = `${2 * reach.across}px`;
       z.classList.toggle("ct-target", o.target?.hand === seat.id);
       const right = { x: Math.sin(a), y: -Math.cos(a) }, outward = { x: Math.cos(a), y: Math.sin(a) };
@@ -533,7 +527,7 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
       // inner corner; its owner clicks it to lock or unlock
       if (seat.player) {
         const locked = handLocked(st, seat.id);
-        const lx = c.x - right.x * reach.along - outward.x * reach.across, ly = c.y - right.y * reach.along - outward.y * reach.across;
+        const lx = c.x - right.x * (reach.along - CORNER_IN) - outward.x * (reach.across - CORNER_IN), ly = c.y - right.y * (reach.along - CORNER_IN) - outward.y * (reach.across - CORNER_IN);
         const can = own || view.lockAll;
         const lock = el(can ? "button" : "div", "ct-lock", zoneEyeLayer);
         lock.style.setProperty("--seat", seat.color);
@@ -551,7 +545,7 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
       // who can see this hand: an eye on the area's inner corner, to the right as its owner sits
       if (!st.hands[seat.id].length) return;
       const shown = !!st.shownHands?.[seat.id];
-      const ex = c.x + right.x * reach.along - outward.x * reach.across, ey = c.y + right.y * reach.along - outward.y * reach.across;
+      const ex = c.x + right.x * (reach.along - CORNER_IN) - outward.x * (reach.across - CORNER_IN), ey = c.y + right.y * (reach.along - CORNER_IN) - outward.y * (reach.across - CORNER_IN);
       const eye = el("div", "ct-eye ct-zone-eye", zoneEyeLayer);
       eye.innerHTML = eyeSVG(shown);
       eye.classList.toggle("ct-eye-open", shown);
@@ -657,9 +651,9 @@ export function eyeSVG(open) {
 
 // a padlock, shut or with its shackle swung open
 export function lockSVG(locked) {
-  const shackle = locked ? "M8 11V7.5a4 4 0 0 1 8 0V11" : "M8 11V7.5a4 4 0 0 1 7.7-1.5";
+  const shackle = locked ? "M8.5 11V8a3.5 3.5 0 0 1 7 0v3" : "M8.5 11V8a3.5 3.5 0 0 1 6.8-1.2";
   return `<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-    <path d="${shackle}"/><rect x="5.5" y="11" width="13" height="9.5" rx="2" fill="currentColor"/></svg>`;
+    <path d="${shackle}"/><rect x="6.5" y="11" width="11" height="8.5" rx="1.8" fill="currentColor" stroke-width="1.6"/></svg>`;
 }
 
 function el(tag, cls, parent) {

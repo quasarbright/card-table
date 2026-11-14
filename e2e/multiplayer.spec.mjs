@@ -2,6 +2,7 @@
 // (?net=local) instead of the internet, driven with real mouse input.
 import { test, expect } from "@playwright/test";
 import { serveFromCache } from "./helpers.mjs";
+import { CX, CY, clampToFelt } from "../table.mjs";
 
 async function tab(context) {
   const page = await context.newPage();
@@ -111,7 +112,7 @@ test("a drag shows on the other screen while it happens, and the drop lands on b
   const before = await center(B, cardSel(top));
   await A.mouse.move(...Object.values(await center(A, cardSel(top))));
   await A.mouse.down();
-  const to = await at(A, 330, 420);
+  const to = await at(A, CX - 170, CY - 48);
   await A.mouse.move(to.x, to.y, { steps: 15 });
   await B.waitForTimeout(500);
   // mid-drag: B's copy of the card has moved, and carries the dragger's name
@@ -131,7 +132,7 @@ test("a joiner's move reaches the host, and anyone can undo it", async ({ contex
   const top = (await state(B)).piles.deck.cards.at(-1);
   await B.mouse.move(...Object.values(await center(B, cardSel(top))));
   await B.mouse.down();
-  const to = await at(B, 650, 420);
+  const to = await at(B, CX + 150, CY - 48);
   await B.mouse.move(to.x, to.y, { steps: 10 });
   await B.mouse.up();
   await settle(A);
@@ -184,7 +185,7 @@ test("a hand is locked until its player opens it: until then nobody else can tak
   await expect(B.locator(".ct-lock-mine")).toHaveCount(1);
   expect(await B.locator('.ct-lock[data-seat="s0"]').evaluate((e) => e.style.getPropertyValue("--seat"))).toBe((await state(A)).seats[0].color);
   // Ana can't pick up Mike's card...
-  const mid = await at(B, 500, 500);
+  const mid = await at(B, CX, CY);
   let c = await center(B, cardSel(mine[0]));
   await B.mouse.move(c.x, c.y); await B.mouse.down();
   await B.mouse.move(mid.x, mid.y, { steps: 6 }); await B.mouse.up();
@@ -310,7 +311,7 @@ test("a spectator can't move cards", async ({ context }) => {
   const top = (await state(B)).piles.deck.cards.at(-1);
   await B.mouse.move(...Object.values(await center(B, cardSel(top))));
   await B.mouse.down();
-  const to = await at(B, 650, 420);
+  const to = await at(B, CX + 150, CY - 48);
   await B.mouse.move(to.x, to.y, { steps: 8 });
   await B.mouse.up();
   await settle(A);

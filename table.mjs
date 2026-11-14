@@ -16,12 +16,16 @@
 //   nextZ,                                        // stacking order for piles
 // }
 //
-// Table coordinates: the table is a circle of radius TABLE_R centered on (TABLE_R, TABLE_R).
-// Seat i of n sits at angle seatAngle(i, n), measured like screen angles (y down), with seat
-// 0 at the bottom.
+// Table coordinates: the table is a wide rounded rectangle TABLE_W × TABLE_H, its middle at
+// (CX, CY), with a rail RAIL wide around the felt. Seats sit along the two long sides: the first
+// half (rounded up) along the bottom, the rest along the top, numbered going round the table
+// (along the bottom right to left, then along the top left to right), seat 0 at the bottom.
+// seatAngle(i, n) is the way out from the middle toward a seat, measured like screen angles
+// (y down): π/2 for the bottom side, -π/2 for the top.
 
-export const TABLE_R = 500;
-export const FELT_R = 440;
+export const TABLE_W = 1100, TABLE_H = 660, RAIL = 50;
+export const FELT_W = TABLE_W - 2 * RAIL, FELT_H = TABLE_H - 2 * RAIL, FELT_RADIUS = 90;
+export const CX = TABLE_W / 2, CY = TABLE_H / 2;
 export const CARD_W = 70, CARD_H = 98;
 export const SUITS = ["S", "H", "D", "C"];
 export const RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"];
@@ -29,12 +33,39 @@ export const RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q
 export const SEAT_COLORS = ["#f0b84a", "#6cb8f0", "#f0708c", "#b392f0", "#f28a52", "#4fd1c5", "#a3d977", "#e88fd9"];
 export const MAX_SEATS = 6;
 
-export function seatAngle(i, n) { return Math.PI / 2 + (i * 2 * Math.PI) / n; }
+// seat i of n: which side, where along it (x), and how wide its share of the side is
+export function seatSpot(i, n) {
+  const bottom = Math.ceil(n / 2), top = n - bottom;
+  const onBottom = i < bottom, count = onBottom ? bottom : top;
+  // left-to-right position on its side
+  const j = onBottom ? bottom - 1 - i : i - bottom;
+  // (kept in from the ends, so hands by the corners stay clear of their curve)
+  const share = (FELT_W - 80) / count;
+  return { x: CX + (j - (count - 1) / 2) * share, a: onBottom ? Math.PI / 2 : -Math.PI / 2, room: share - 16 };
+}
+export function seatAngle(i, n) { return seatSpot(i, n).a; }
+// how wide a seat's hand may spread
+export function seatRoom(i, n) { return seatSpot(i, n).room; }
 
-// where a seat's hand sits on the table (just inside the felt's edge)
-export function handCenter(i, n, r = FELT_R - 70) {
-  const a = seatAngle(i, n);
-  return { x: TABLE_R + r * Math.cos(a), y: TABLE_R + r * Math.sin(a) };
+// a point r out from the table's middle line toward seat i, in front of that seat
+export function handCenter(i, n, r = FELT_H / 2 - 70) {
+  const { x, a } = seatSpot(i, n);
+  return { x: x + r * Math.cos(a), y: CY + r * Math.sin(a) };
+}
+
+// the nearest point to (x, y) where something reaching ext.x either side and ext.y above and
+// below lies on the felt, at least `margin` in from its edge
+export function clampToFelt(x, y, margin = 50, ext = { x: 0, y: 0 }) {
+  const hw = Math.max(0, FELT_W / 2 - margin - ext.x), hh = Math.max(0, FELT_H / 2 - margin - ext.y);
+  const r = Math.max(0, Math.min(FELT_RADIUS - margin, hw, hh));
+  let dx = Math.max(-hw, Math.min(hw, x - CX)), dy = Math.max(-hh, Math.min(hh, y - CY));
+  // in a rounded corner, back along the corner's curve
+  const ix = hw - r, iy = hh - r, ax = Math.abs(dx), ay = Math.abs(dy);
+  if (ax > ix && ay > iy) {
+    const ex = ax - ix, ey = ay - iy, d = Math.hypot(ex, ey);
+    if (d > r) { dx = Math.sign(dx) * (ix + ex * r / d); dy = Math.sign(dy) * (iy + ey * r / d); }
+  }
+  return { x: CX + dx, y: CY + dy };
 }
 
 export function makeSeats(n) {
@@ -59,7 +90,7 @@ export function newTable(nSeats = 4) {
   const order = Object.keys(cards).reverse();
   return {
     seats, cards, hands,
-    piles: { deck: { id: "deck", x: TABLE_R, y: TABLE_R, rot: 0, z: 1, cards: order } },
+    piles: { deck: { id: "deck", x: CX, y: CY, rot: 0, z: 1, cards: order } },
     nextZ: 2,
     shownHands: {},
   };
@@ -300,7 +331,7 @@ const ACTIONS = {
     if (leftover.length) {
       for (const id of leftover) s.cards[id].faceUp = false;
       const id = `returned${s.nextZ}`;
-      s.piles[id] = { id, x: TABLE_R, y: TABLE_R, rot: 0, z: 0, cards: leftover };
+      s.piles[id] = { id, x: CX, y: CY, rot: 0, z: 0, cards: leftover };
       raise(s, id);
     }
   },

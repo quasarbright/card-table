@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { newTable, apply, locate, canSee, tiltedToward, shuffledOrder, checkConservation, TABLE_R } from "./table.mjs";
+import { newTable, apply, locate, canSee, tiltedToward, shuffledOrder, checkConservation, CX, CY } from "./table.mjs";
 
 const run = (state, ...actions) => actions.reduce((s, a) => {
   const next = apply(s, a);
@@ -107,7 +107,7 @@ test("gather brings every card back face down", () => {
     { type: "deal", pile: "deck", count: 5, seats: ["s0", "s1"] },
     { type: "flip", cards: ["KC"] },
     { type: "moveCards", cards: ["KC"], to: { newPile: { id: "k", x: 10, y: 10 } } });
-  s = run(s, { type: "gather", id: "g", x: TABLE_R, y: TABLE_R });
+  s = run(s, { type: "gather", id: "g", x: CX, y: CY });
   assert.equal(s.piles.g.cards.length, 52);
   assert.ok(Object.values(s.cards).every((c) => !c.faceUp));
   assert.ok(Object.values(s.hands).every((h) => h.length === 0));

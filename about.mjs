@@ -1,13 +1,13 @@
 // The about modal's diagram: one small two-player table, drawn twice by the real view, once
 // from each seat. A short script of real actions plays on a loop.
-import { newTable, apply } from "./table.mjs";
+import { newTable, apply, CX, CY } from "./table.mjs";
 import { createView } from "./view.mjs";
 
 const STEPS = [
   [null, "A face-down deck. Nobody can see any card."],
   [() => ({ type: "deal", pile: "deck", count: 3, seats: ["s0", "s1"] }),
     "Three cards dealt to each player. You see your own hand and the backs of theirs."],
-  [(s) => ({ type: "moveCards", cards: [s.piles.deck.cards.at(-1)], to: { newPile: { id: "c", x: 640, y: 470, rot: 0 } } }),
+  [(s) => ({ type: "moveCards", cards: [s.piles.deck.cards.at(-1)], to: { newPile: { id: "c", x: CX + 130, y: CY, rot: 0 } } }),
     "A card goes face down on the table."],
   [() => ({ type: "setPrivate", cards: [cardIn("c")], seat: "s1" }),
     "Player 2 looks at it. It tips toward them, and only they see its face."],

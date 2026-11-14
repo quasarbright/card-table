@@ -1,7 +1,7 @@
 // The page: one shared table, played by hand. Pointer and keyboard input turn into table
 // actions (see table.mjs). A session (sync.mjs) applies them and keeps every player's table the
 // same; while you drag, where your cards are is streamed to everyone else as it happens.
-import { newTable, apply, shuffledOrder, locate, handCenter, seatAngle, handLocked, MAX_SEATS, RANKS, SUITS, CARD_W, CARD_H, TABLE_R, FELT_R } from "./table.mjs";
+import { newTable, apply, shuffledOrder, locate, handCenter, seatAngle, seatSpot, seatRoom, clampToFelt, handLocked, MAX_SEATS, RANKS, SUITS, CARD_W, CARD_H, CY, FELT_H, RAIL } from "./table.mjs";
 import { createView, HAND_R, OWN_HAND_R, GRIP_REACH, handGap, handReach, spreadGap, eyeSVG } from "./view.mjs";
 import { suitDefs } from "./faces.mjs";
 import { startAboutDiagram } from "./about.mjs";
@@ -88,7 +88,7 @@ function draw(o = {}) {
 function relayout() {
   const narrow = innerWidth < 600;
   view.stage.classList.add("ct-still");
-  view.layout(narrow ? 70 : 20, narrow ? 120 : 92);
+  view.layout(narrow ? 70 : 52, narrow ? 120 : 92);
   draw({ instant: true });
   requestAnimationFrame(() => view.stage.classList.remove("ct-still"));
 }
@@ -143,6 +143,8 @@ function hostSaved(id) { try { return JSON.parse(read(`host:${id}`)); } catch { 
 function startHost(id, name, color) {
   history.replaceState(null, "", tableUrl(id));
   let st = hostSaved(id);
+  // a table saved before the table was wide: bring its stacks onto the felt
+  if (st) for (const pile of Object.values(st.piles)) Object.assign(pile, clampToFelt(pile.x, pile.y));
   if (!st?.seats?.some((s) => s.player === player)) {
     // a new table has just your seat; a seat is added for each person who joins
     st = st ?? newTable(1);
@@ -283,12 +285,9 @@ function onRemotePeek(m) {
 // screen shows empty floor), they come back in to the nearest spot where they lie on the felt.
 // `len` is how far a spread row reaches from (x, y) along `rot`; the whole row is kept on.
 function onFelt(x, y, rot = 0, len = 0) {
-  const lim = FELT_R - 50, half = len / 2;
-  const mx = x + Math.cos(rot) * half, my = y + Math.sin(rot) * half;
-  const r = Math.hypot(mx - TABLE_R, my - TABLE_R), allow = Math.max(0, lim - half);
-  if (r <= allow) return { x, y };
-  const k = allow / r;
-  return { x: TABLE_R + (mx - TABLE_R) * k - Math.cos(rot) * half, y: TABLE_R + (my - TABLE_R) * k - Math.sin(rot) * half };
+  const half = len / 2, ux = Math.cos(rot) * half, uy = Math.sin(rot) * half;
+  const m = clampToFelt(x + ux, y + uy, 50, { x: Math.abs(ux), y: Math.abs(uy) });
+  return { x: m.x - ux, y: m.y - uy };
 }
 
 // where carried cards would land if dropped at (x, y), in table coordinates
@@ -340,11 +339,11 @@ function dropTarget(x, y) {
     const hand = state.hands[seat.id], rest = hand.filter((id) => !carried.has(id));
     const shown = !!state.shownHands?.[seat.id];
     const r = rest.length, nIn = carried.size, m = r + nIn;
-    const reach = handReach(own, m, shown);
+    const room = seatRoom(i, n), reach = handReach(own, m, shown, room);
     if (Math.abs(along) > reach.along || Math.abs(across) > reach.across) continue;
     // as in a spread stack: the slot that, in the hand as it's drawn with the carried cards in
     // it, puts the middle of what you carry under the pointer
-    const gm = handGap(own, m, shown);
+    const gm = handGap(own, m, shown, room);
     const slot = Math.max(0, Math.min(r, Math.round((along - ((nIn - 1) * gm) / 2) / gm + (m - 1) / 2)));
     const index = slot < rest.length ? hand.indexOf(rest[slot]) : hand.length;
     return { hand: seat.id, slot, index };
@@ -703,8 +702,7 @@ function split(pileId, n) {
   const parts = Array.from({ length: n }, (_, k) => {
     const along = (k - (n - 1) / 2) * gap;
     let x = p.x + right.x * along, y = p.y + right.y * along;
-    const r = Math.hypot(x - TABLE_R, y - TABLE_R), lim = FELT_R - 80;
-    if (r > lim) { x = TABLE_R + (x - TABLE_R) * lim / r; y = TABLE_R + (y - TABLE_R) * lim / r; }
+    ({ x, y } = clampToFelt(x, y, 80));
     return { id: k === 0 ? pileId : newId(), x, y, rot: p.rot };
   });
   dispatch({ type: "split", pile: pileId, parts });
@@ -881,17 +879,17 @@ function placeHandBar() {
   const btn = handBar.querySelector("[data-show]");
   btn.textContent = shown ? "Hide hand" : "Show hand";
   btn.title = shown ? "Pick your hand back up, so only you see it" : "Lay your hand flat and face up, so everyone sees it. It stays your hand.";
-  const i = state.seats.findIndex((x) => x.id === me), n = state.seats.length, a = seatAngle(i, n);
+  const i = state.seats.findIndex((x) => x.id === me), n = state.seats.length, spot = seatSpot(i, n);
   const r = handBar.getBoundingClientRect();
   // your name plate's middle, on the rail
-  const rr = (FELT_R + TABLE_R) / 2;
-  const p = view.toScreen(TABLE_R + rr * Math.cos(a), TABLE_R + rr * Math.sin(a));
+  const p = view.toScreen(spot.x, CY + ((FELT_H + RAIL) / 2) * Math.sin(spot.a));
   if (innerWidth < 600) {
     // narrow: centered under your name
     handBar.style.left = `${p.x - r.width / 2}px`; handBar.style.top = `${p.y + 22}px`;
   } else {
-    // to the right of your name
-    handBar.style.left = `${p.x + 92}px`; handBar.style.top = `${p.y - r.height / 2}px`;
+    // to the right of your name, or its left if that runs off the screen
+    const right = p.x + 92 + r.width <= innerWidth - 8;
+    handBar.style.left = `${right ? p.x + 92 : p.x - 92 - r.width}px`; handBar.style.top = `${p.y - r.height / 2}px`;
   }
 }
 
