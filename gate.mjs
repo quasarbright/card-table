@@ -21,7 +21,7 @@ export function wireSwatches(root, onPick) {
 
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 
-// o.step: "start" | "name" | "connecting" | "unreachable" | "full" | "kicked" | "lost"
+// o.step: "start" | "name" | "connecting" | "unreachable" | "offline" | "full" | "kicked" | "lost"
 // o.name, o.color: what to fill in; o.done(name, color): confirmed; o.joining: joining rather than hosting;
 // o.retry(), o.host(): the buttons on the error screens
 export function openGate(o) {
@@ -71,6 +71,11 @@ export function openGate(o) {
   } else if (o.step === "unreachable") {
     show(`<h1 id="ct-gate-title">Can't reach this table</h1>
       <p>The host needs to have the table open in their browser. Check that they do, or ask them to send the link again.</p>
+      <button class="ct-act ct-act-ink" data-go>Try again</button>`);
+    card.querySelector("[data-go]").addEventListener("click", o.retry);
+  } else if (o.step === "offline") {
+    show(`<h1 id="ct-gate-title">Can't get online</h1>
+      <p>The page couldn't download what it uses to connect players. Check your internet connection and try again.</p>
       <button class="ct-act ct-act-ink" data-go>Try again</button>`);
     card.querySelector("[data-go]").addEventListener("click", o.retry);
   } else if (o.step === "full") {

@@ -6,12 +6,20 @@
 //   net.selfId                 this browser's id in the room
 //   net.on(type, fn)           fn(data, fromPeer) for each message of that type
 //   net.onJoin(fn), onLeave(fn)
-//   net.start()                begin finding peers (after the handlers are in place)
+//   net.start()                begin finding peers (after the handlers are in place); a promise
 //   net.send(type, data, to?)  to one peer, or to everyone
 //   net.leave()
 
 const TRYSTERO = "https://cdn.jsdelivr.net/npm/trystero@0.26.0/+esm";
 const APP_ID = "quasarbright-card-table";
+// The Nostr relays that introduce players to each other. Trystero's built-in list includes some
+// that are gone (they fill the console with failed connections). Each of these paired two
+// browsers on its own when picked (2026-11); several big ones didn't (nos.lol, nostr.mom), and
+// some refuse Trystero's messages. Every player has to use the same list.
+const RELAYS = [
+  "wss://relay.primal.net", "wss://relay.snort.social", "wss://cdn.satellite.earth",
+  "wss://relay.nostr.blockhenge.com", "wss://relay.agentry.com", "wss://nostrcity-club.fly.dev",
+];
 
 export function connect(roomId, kind = "trystero") {
   return kind === "local" ? localNet(roomId) : trysteroNet(roomId);
@@ -44,10 +52,11 @@ function trysteroNet(roomId) {
   const net = {
     ...h.api,
     selfId: null,
+    // rejects if the peer-to-peer library can't be downloaded (after one retry)
     async start() {
-      const t = await import(TRYSTERO);
+      const t = await import(TRYSTERO).catch(() => new Promise((r) => setTimeout(r, 1500)).then(() => import(TRYSTERO)));
       net.selfId = t.selfId;
-      room = t.joinRoom({ appId: APP_ID }, roomId);
+      room = t.joinRoom({ appId: APP_ID, relayConfig: { urls: RELAYS } }, roomId);
       for (const type of h.handlers.keys()) action(type);
       room.onPeerJoin = (id) => h.joins.forEach((f) => f(id));
       room.onPeerLeave = (id) => h.leaves.forEach((f) => f(id));
@@ -70,7 +79,7 @@ function localNet(roomId) {
   const net = {
     ...h.api,
     selfId: id,
-    start() {
+    async start() {
       ch = new BroadcastChannel(`card-table:${roomId}`);
       ch.onmessage = ({ data: m }) => {
         if (m.to && m.to !== id) return;

@@ -181,7 +181,7 @@ function startHost(id, name, color) {
   });
   net.on("drag", onRemoteDrag);
   net.on("peek", onRemotePeek);
-  net.start();
+  net.start().catch(() => openGate({ step: "offline", retry: () => location.reload() }));
   hostSave(id)(st);
   state = st; me = session.seat; view.viewer = me; view.lockAll = true;
   closeGate();
@@ -210,7 +210,7 @@ function startJoin(id, name, color) {
   });
   net.on("drag", onRemoteDrag);
   net.on("peek", onRemotePeek);
-  net.start();
+  net.start().catch(() => openGate({ step: "offline", retry: () => location.reload() }));
 }
 function onRoster(r) {
   // the host hears about each person who arrives to watch
