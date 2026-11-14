@@ -143,6 +143,45 @@ test("your hand stays hidden from the other player until you show it", async ({ 
   for (const id of anaCards) expect(await A.locator(`${cardSel(id)} .ct-index`).count()).toBeGreaterThan(0);
 });
 
+test("a hand is locked until its player opens it: until then nobody else can take from it", async ({ context }) => {
+  const { A, B } = await twoAtATable(context);
+  await A.evaluate(() => window.cardTable.deal("deck", 2));
+  await A.waitForTimeout(800);
+  const mine = (await state(A)).hands.s0;
+  // a lock on each hand, in its player's color; only your own is a button
+  await expect(B.locator(".ct-lock.ct-locked")).toHaveCount(2);
+  await expect(B.locator(".ct-lock-mine")).toHaveCount(1);
+  expect(await B.locator('.ct-lock[data-seat="s0"]').evaluate((e) => e.style.getPropertyValue("--seat"))).toBe((await state(A)).seats[0].color);
+  // Ana can't pick up Mike's card...
+  const mid = await at(B, 500, 500);
+  let c = await center(B, cardSel(mine[0]));
+  await B.mouse.move(c.x, c.y); await B.mouse.down();
+  await B.mouse.move(mid.x, mid.y, { steps: 6 }); await B.mouse.up();
+  await settle(A);
+  expect((await state(A)).hands.s0).toEqual(mine);
+  // ...nor reach it by sending the move directly: the host turns it down
+  await B.evaluate((id) => window.cardTable.dispatch({ type: "moveCards", cards: [id], to: { hand: "s1", index: 0 } }), mine[0]);
+  await settle(A);
+  expect((await state(A)).hands.s0).toEqual(mine);
+  expect(JSON.stringify(await state(B))).toBe(JSON.stringify(await state(A)));
+  // Mike opens his hand; now Ana can take
+  await A.locator(".ct-lock-mine").click();
+  await expect(B.locator('.ct-lock[data-seat="s0"]')).not.toHaveClass(/ct-locked/);
+  c = await center(B, cardSel(mine[0]));
+  await B.mouse.move(c.x, c.y); await B.mouse.down();
+  await B.mouse.move(mid.x, mid.y, { steps: 6 }); await B.mouse.up();
+  await settle(A);
+  expect((await state(A)).hands.s0).toHaveLength(1);
+  // undo takes back the move, not the unlocking
+  await A.evaluate(() => window.cardTable.undo());
+  await settle(A);
+  expect((await state(A)).hands.s0).toEqual(mine);
+  await expect(A.locator(".ct-lock-mine")).not.toHaveClass(/ct-locked/);
+  await A.locator(".ct-lock-mine").click();
+  await expect(B.locator('.ct-lock[data-seat="s0"]')).toHaveClass(/ct-locked/);
+  expect([...A.errors, ...B.errors]).toEqual([]);
+});
+
 test("when the host closes the table, the others are told", async ({ context }) => {
   const { A, B } = await twoAtATable(context);
   await A.close();

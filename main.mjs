@@ -1,7 +1,7 @@
 // The page: one shared table, played by hand. Pointer and keyboard input turn into table
 // actions (see table.mjs). A session (sync.mjs) applies them and keeps every player's table the
 // same; while you drag, where your cards are is streamed to everyone else as it happens.
-import { newTable, apply, shuffledOrder, locate, handCenter, seatAngle, MAX_SEATS, RANKS, SUITS, CARD_W, CARD_H, TABLE_R, FELT_R } from "./table.mjs";
+import { newTable, apply, shuffledOrder, locate, handCenter, seatAngle, handLocked, MAX_SEATS, RANKS, SUITS, CARD_W, CARD_H, TABLE_R, FELT_R } from "./table.mjs";
 import { createView, HAND_R, OWN_HAND_R, GRIP_REACH, handGap, handReach, spreadGap } from "./view.mjs";
 import { suitDefs } from "./faces.mjs";
 import { startAboutDiagram } from "./about.mjs";
@@ -248,6 +248,8 @@ function cardTarget(id) {
     // a spread stack hands you the card you pointed at; any other, its top card
     return { card: spreadNow(p) ? id : p.cards.at(-1), pile: p.id };
   }
+  // someone else's locked hand is theirs alone
+  if (where.hand !== me && handLocked(state, where.hand)) return null;
   return { card: id, hand: where.hand };
 }
 // the same target, after the table changed under it (a stack flipped, a card moved)
@@ -271,6 +273,18 @@ function onRemotePeek(m) {
   if (!m?.seat || m.seat === session?.seat) return;
   if (m.piles.length) peekers.set(m.seat, m.piles); else peekers.delete(m.seat);
   draw();
+}
+
+// Cards only go down on the felt. Dropped past its edge (off the table, or out where a wide
+// screen shows empty floor), they come back in to the nearest spot where they lie on the felt.
+// `len` is how far a spread row reaches from (x, y) along `rot`; the whole row is kept on.
+function onFelt(x, y, rot = 0, len = 0) {
+  const lim = FELT_R - 50, half = len / 2;
+  const mx = x + Math.cos(rot) * half, my = y + Math.sin(rot) * half;
+  const r = Math.hypot(mx - TABLE_R, my - TABLE_R), allow = Math.max(0, lim - half);
+  if (r <= allow) return { x, y };
+  const k = allow / r;
+  return { x: TABLE_R + (mx - TABLE_R) * k - Math.cos(rot) * half, y: TABLE_R + (my - TABLE_R) * k - Math.sin(rot) * half };
 }
 
 // where carried cards would land if dropped at (x, y), in table coordinates
@@ -364,6 +378,12 @@ tableEl.addEventListener("pointerdown", (e) => {
     }, HOLD_MS);
   }
 });
+// your hand's lock: click it to let others take from your hand, or to stop them
+tableEl.addEventListener("click", (e) => {
+  const lock = e.target.closest?.(".ct-lock-mine");
+  if (!lock || !seated()) return;
+  dispatch({ type: "setHandLocked", seat: lock.dataset.seat, locked: !handLocked(state, lock.dataset.seat) });
+});
 // the right button while carrying (the left one held down) flips what you carry
 addEventListener("mousedown", (e) => { if (drag && e.button === 2) { e.preventDefault(); flipCarried(); } });
 
@@ -438,15 +458,18 @@ tableEl.addEventListener("pointerup", (e) => {
       dispatch(startsSpread(to.pile, cards.every((id) => state.cards[id].faceUp)) ? spreadIt(act, to.pile) : act);
     }
     else if (to?.hand) dispatch({ type: "moveCards", cards: [...cards], to: { hand: to.hand, index: to.index } });
-    else dispatch({ type: "movePile", pile: d.pile, x: d.x, y: d.y });
+    else {
+      const p = state.piles[d.pile];
+      dispatch({ type: "movePile", pile: d.pile, ...onFelt(d.x, d.y, p.rot, p.look === "spread" ? (p.cards.length - 1) * spreadGap(p.cards.length) : 0) });
+    }
   } else {
     const from = d.from;
     const alone = from.pile && state.piles[from.pile].cards.length === 1;
     let act;
     if (to?.pile) act = { type: "moveCards", cards: d.cards, to: { pile: to.pile, ...(to.slot != null ? { index: to.index } : {}) } };
     else if (to?.hand) act = { type: "moveCards", cards: d.cards, to: { hand: to.hand, index: to.index } };
-    else if (alone) act = { type: "movePile", pile: from.pile, x: d.x, y: d.y, rot: d.rot };
-    else act = { type: "moveCards", cards: d.cards, to: { newPile: { id: newId(), x: d.x, y: d.y, rot: d.rot + (Math.random() - .5) * 0.06 } } };
+    else if (alone) act = { type: "movePile", pile: from.pile, ...onFelt(d.x, d.y), rot: d.rot };
+    else act = { type: "moveCards", cards: d.cards, to: { newPile: { id: newId(), ...onFelt(d.x, d.y), rot: d.rot + (Math.random() - .5) * 0.06 } } };
     // onto the table on whichever side it was carried (into a hand, it's just held)
     const lands = from.hand ? false : state.cards[d.cards[0]].faceUp;
     if (!to?.hand && d.faceUp !== lands) act = { type: "batch", actions: [act, { type: "flip", cards: d.cards }] };

@@ -155,6 +155,19 @@
     .ct-eye.ct-eye-open { background: var(--ivory); color: #1d1c22; box-shadow: 0 0 0 calc(1.5px / var(--s, 1)) #1d1c22, 0 2px 6px rgba(0,0,0,.4); }
     .ct-eye.ct-eye-them { background: var(--eye); color: #15110c; box-shadow: 0 0 0 calc(1.5px / var(--s, 1)) #15110c, 0 2px 6px rgba(0,0,0,.4); }
 
+    /* a hand's lock, in its player's color: solid while locked, an outline while open */
+    .ct-lock {
+      transform-origin: 0 0; position: absolute; left: 0; top: 0; margin: 0; font: inherit;
+      width: calc(22px / var(--s, 1)); height: calc(22px / var(--s, 1)); padding: calc(3.5px / var(--s, 1)); box-sizing: border-box;
+      border-radius: 50%; border: 0; pointer-events: auto;
+      background: #1d1c22; color: var(--seat);
+      box-shadow: 0 0 0 calc(1.5px / var(--s, 1)) var(--seat), 0 2px 6px rgba(0,0,0,.4);
+    }
+    .ct-lock.ct-locked { background: var(--seat); color: #15110c; box-shadow: 0 0 0 calc(1.5px / var(--s, 1)) #15110c, 0 2px 6px rgba(0,0,0,.4); }
+    .ct-lock.ct-lock-mine { cursor: pointer; }
+    .ct-lock.ct-lock-mine:hover { filter: brightness(1.15); }
+    .ct-lock:focus-visible { outline: 2px solid var(--ivory); outline-offset: 2px; }
+
     /* ---- the menu: printed on the same ivory stock as the cards, red ink for the keys ---- */
     .ct-menu {
       --ink: #1d1c22; --red: #a8322f;

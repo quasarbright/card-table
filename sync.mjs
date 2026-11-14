@@ -13,12 +13,12 @@
 //   session.seat             the seat you're sitting in
 //   session.dispatch(action, fx)   fx: how to animate it (passed along to everyone)
 //   session.undo(), session.canUndo()   take back the table's last change, whoever made it
-import { apply, MAX_SEATS } from "./table.mjs";
+import { apply, MAX_SEATS, touchesLockedHand } from "./table.mjs";
 
 const HISTORY = 300;
 // who sits where isn't part of the game: undo never takes it back, and it's written into
 // every earlier table too, so undoing past someone's arrival keeps them seated
-const SEATING = new Set(["sit", "stand", "setSeats", "setPlayer"]);
+const SEATING = new Set(["sit", "stand", "setSeats", "setPlayer", "setHandLocked"]);
 
 // People who join start out watching. The host can give them a seat, ask a seated player to
 // watch instead, or send someone away for good (while this table is open).
@@ -33,7 +33,10 @@ export function hostSession(net, state, me, hooks) {
 
   function commit(action, by, fx = null, id = null, from = null) {
     let next;
-    try { next = apply(state, action); } catch {
+    try {
+      if (by && touchesLockedHand(state, action, by)) throw new Error("locked hand");
+      next = apply(state, action);
+    } catch {
       if (from) net.send("reject", { id }, from);
       return false;
     }

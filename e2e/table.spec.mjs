@@ -72,6 +72,30 @@ test("drag the top card off the deck, then click it and pick Flip", async ({ pag
   expect(errors).toEqual([]);
 });
 
+test("a card or stack dropped off the felt comes back onto it", async ({ page }) => {
+  const errors = await open(page);
+  const R = 500, lim = 440 - 50;
+  // a card, dropped in the corner of the screen
+  const top = await topOf(page, "deck");
+  const vp = page.viewportSize();
+  await dragTo(page, await center(page, cardSel(top)), { x: vp.width - 10, y: 10 });
+  let s = await state(page);
+  const pile = Object.values(s.piles).find((p) => p.cards.includes(top));
+  expect(Math.hypot(pile.x - R, pile.y - R)).toBeLessThanOrEqual(lim + 0.5);
+  expect(Math.hypot(pile.x - R, pile.y - R)).toBeGreaterThan(lim - 5);
+  // the whole deck, spread out, dropped off the bottom left: the whole row comes back on
+  await page.evaluate(() => window.cardTable.dispatch({ type: "setLook", pile: "deck", look: "spread" }));
+  await settle(page);
+  await page.mouse.move(...Object.values(await center(page, ".ct-grip")));
+  await page.mouse.down(); await page.waitForTimeout(400);
+  await page.mouse.move(5, vp.height - 5, { steps: 8 }); await page.waitForTimeout(80); await page.mouse.up();
+  await settle(page);
+  s = await state(page);
+  const d = s.piles.deck, len = 600;
+  for (const t of [0, len]) expect(Math.hypot(d.x + Math.cos(d.rot) * t - R, d.y + Math.sin(d.rot) * t - R)).toBeLessThanOrEqual(lim + 1);
+  expect(errors).toEqual([]);
+});
+
 test("a card dragged into your hand shows you its face and others its back", async ({ page }) => {
   const errors = await open(page);
   const top = await topOf(page, "deck");

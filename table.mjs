@@ -117,6 +117,8 @@ export function tiltedToward(state, cardId) {
 // { type: "setPlayer", seat, name?, color? } rename or recolor a seat; a color no player has
 //                                            (an empty seat holding it swaps with you)
 // { type: "setHandShown", seat, shown }     lay a hand flat and face up (it stays that seat's)
+// { type: "setHandLocked", seat, locked }   a locked hand (the default) is its player's alone:
+//                                            nobody else takes, flips or peeks at its cards
 // { type: "setLook", pile, look }           null (squared up), "few" or "spread"
 // { type: "setMessy", pile, messy }         the same as look "few" / null
 // { type: "batch", actions: [...] }         several actions as one step (one undo)
@@ -226,12 +228,14 @@ const ACTIONS = {
     const x = s.seats.find((q) => q.id === seat);
     if (!x) throw new Error(`no seat ${seat}`);
     x.player = player; x.name = name;
+    if (s.openHands) delete s.openHands[seat]; // a new player's hand starts locked
     if (color && SEAT_COLORS.includes(color) && !s.seats.some((q) => q !== x && q.player && q.color === color)) recolor(s, x, color);
   },
   stand(s, { seat }) {
     const x = s.seats.find((q) => q.id === seat);
     if (!x) throw new Error(`no seat ${seat}`);
     x.player = null;
+    if (s.openHands) delete s.openHands[seat];
   },
   setPlayer(s, { seat, name, color }) {
     const x = s.seats.find((q) => q.id === seat);
@@ -245,6 +249,10 @@ const ACTIONS = {
   setHandShown(s, { seat, shown }) {
     s.shownHands = { ...(s.shownHands ?? {}) };
     if (shown) s.shownHands[seat] = true; else delete s.shownHands[seat];
+  },
+  setHandLocked(s, { seat, locked }) {
+    s.openHands = { ...(s.openHands ?? {}) };
+    if (locked) delete s.openHands[seat]; else s.openHands[seat] = true;
   },
   setLook(s, { pile, look }) {
     const p = s.piles[pile];
@@ -288,6 +296,7 @@ const ACTIONS = {
     for (const c of Object.values(s.cards)) if (c.privateTo && !keep.has(c.privateTo)) c.privateTo = null;
     s.seats = seats; s.hands = hands;
     s.shownHands = Object.fromEntries(Object.entries(s.shownHands ?? {}).filter(([id]) => hands[id]));
+    s.openHands = Object.fromEntries(Object.entries(s.openHands ?? {}).filter(([id]) => hands[id]));
     if (leftover.length) {
       for (const id of leftover) s.cards[id].faceUp = false;
       const id = `returned${s.nextZ}`;
@@ -296,6 +305,24 @@ const ACTIONS = {
     }
   },
 };
+
+// a hand is locked while its seat has a player who hasn't unlocked it
+export function handLocked(state, seatId) {
+  const seat = state.seats.find((q) => q.id === seatId);
+  return !!seat?.player && !state.openHands?.[seatId];
+}
+
+// whether an action by `by` (a seat id) reaches into someone else's locked hand
+export function touchesLockedHand(state, action, by) {
+  if (action.type === "batch") return action.actions.some((a) => touchesLockedHand(state, a, by));
+  if (action.type === "setHandLocked") return action.seat !== by;
+  if (action.type === "setHandShown") return action.seat !== by && handLocked(state, action.seat);
+  if (!["moveCards", "flip", "setPrivate"].includes(action.type)) return false;
+  return action.cards.some((id) => {
+    const hand = locate(state, id)?.hand;
+    return hand && hand !== by && handLocked(state, hand);
+  });
+}
 
 // a random order for a shuffle (made by whoever shuffles, then sent in the action)
 export function shuffledOrder(cards, random = Math.random) {

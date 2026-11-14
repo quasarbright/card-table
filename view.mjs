@@ -2,7 +2,7 @@
 // renders; each one springs toward where it belongs every frame, so every move (a deal, a hand
 // opening a gap, a dragged card) is continuous. The same view runs the main table and the small
 // tables in the about modal.
-import { TABLE_R, FELT_R, CARD_W, CARD_H, seatAngle, handCenter, canSee, tiltedToward, locate } from "./table.mjs";
+import { TABLE_R, FELT_R, CARD_W, CARD_H, seatAngle, handCenter, canSee, tiltedToward, locate, handLocked } from "./table.mjs";
 import { faceSVG, backSVG } from "./faces.mjs";
 
 const DEG = 180 / Math.PI;
@@ -527,10 +527,26 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
       const reach = handReach(own, st.hands[seat.id].length + incoming, !!st.shownHands?.[seat.id]);
       z.style.width = `${2 * reach.along}px`; z.style.height = `${2 * reach.across}px`;
       z.classList.toggle("ct-target", o.target?.hand === seat.id);
+      const right = { x: Math.sin(a), y: -Math.cos(a) }, outward = { x: Math.cos(a), y: Math.sin(a) };
+      // whether others can take from this hand: a lock in the player's color on the area's other
+      // inner corner; its owner clicks it to lock or unlock
+      if (seat.player) {
+        const locked = handLocked(st, seat.id);
+        const lx = c.x - right.x * reach.along - outward.x * reach.across, ly = c.y - right.y * reach.along - outward.y * reach.across;
+        const lock = el(own ? "button" : "div", "ct-lock", zoneEyeLayer);
+        lock.style.setProperty("--seat", seat.color);
+        lock.classList.toggle("ct-locked", locked);
+        lock.classList.toggle("ct-lock-mine", own);
+        lock.dataset.seat = seat.id;
+        lock.innerHTML = lockSVG(locked);
+        const whose = own ? "Your hand" : `${seat.name}'s hand`;
+        lock.dataset.tooltip = locked ? `${whose} is locked: only ${own ? "you" : seat.name} can take from it` : `${whose} is open: anyone can take from it`;
+        if (own) lock.setAttribute("aria-label", locked ? "Unlock your hand" : "Lock your hand");
+        lock.style.transform = `translate(${lx}px, ${ly}px) rotate(${-frame.rot * DEG}deg) translate(-50%, -50%)`;
+      }
       // who can see this hand: an eye on the area's inner corner, to the right as its owner sits
       if (!st.hands[seat.id].length) return;
       const shown = !!st.shownHands?.[seat.id];
-      const right = { x: Math.sin(a), y: -Math.cos(a) }, outward = { x: Math.cos(a), y: Math.sin(a) };
       const ex = c.x + right.x * reach.along - outward.x * reach.across, ey = c.y + right.y * reach.along - outward.y * reach.across;
       const eye = el("div", "ct-eye ct-zone-eye", zoneEyeLayer);
       eye.innerHTML = eyeSVG(shown);
@@ -633,6 +649,13 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
 export function eyeSVG(open) {
   return `<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
     <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>${open ? "" : `<path d="M4 20 20 4" stroke-width="2.4"/>`}</svg>`;
+}
+
+// a padlock, shut or with its shackle swung open
+export function lockSVG(locked) {
+  const shackle = locked ? "M8 11V7.5a4 4 0 0 1 8 0V11" : "M8 11V7.5a4 4 0 0 1 7.7-1.5";
+  return `<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="${shackle}"/><rect x="5.5" y="11" width="13" height="9.5" rx="2" fill="currentColor"/></svg>`;
 }
 
 function el(tag, cls, parent) {
