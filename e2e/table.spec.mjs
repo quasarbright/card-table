@@ -47,6 +47,25 @@ const at = (page, x, y) => page.evaluate(([x, y]) => window.cardTable.view.toScr
 const handAt = (page, i) => center(page, `.ct-zone >> nth=${i}`);
 const showsFace = (page, id) => page.locator(`${cardSel(id)} .ct-index`).count().then((n) => n > 0);
 
+test("every badge's icon sits in its middle", async ({ page }) => {
+  await open(page);
+  await page.evaluate(() => window.cardTable.dispatch({ type: "deal", pile: "deck", count: 3, seats: ["s0", "s1"] }));
+  await settle(page);
+  // a peeked card gets an eye too
+  const c = await center(page, cardSel(await topOf(page, "deck")));
+  await page.mouse.move(c.x, c.y); await page.keyboard.press("p");
+  await settle(page);
+  const off = await page.evaluate(() => [...document.querySelectorAll(".ct-lock, .ct-eye, .ct-plate-edit")].map((e) => {
+    const a = e.getBoundingClientRect(), s = e.querySelector("svg").getBoundingClientRect();
+    return { cls: e.className, dx: (s.x + s.width / 2) - (a.x + a.width / 2), dy: (s.y + s.height / 2) - (a.y + a.height / 2) };
+  }));
+  expect(off.length).toBeGreaterThan(4);
+  for (const o of off) {
+    expect(Math.abs(o.dx), o.cls).toBeLessThan(0.5);
+    expect(Math.abs(o.dy), o.cls).toBeLessThan(0.5);
+  }
+});
+
 test("drag the top card off the deck, then click it and pick Flip", async ({ page }) => {
   const errors = await open(page);
   const top = await topOf(page, "deck");
