@@ -446,41 +446,48 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
 
   function renderSeats(st, o) {
     const n = st.seats.length;
-    seatLayer.replaceChildren();
+    const K = keyed(seatLayer);
     st.seats.forEach((seat, i) => {
       const { x: px, a } = seatSpot(i, n);
       const r = (FELT_H + RAIL) / 2;
-      const plate = el("div", "ct-plate", seatLayer);
+      const plate = K.get(seat.id, "div", "ct-plate");
       plate.dataset.seat = seat.id;
       plate.style.setProperty("--seat", seat.color);
       // an empty seat says so; a player who has dropped off is dimmed until they're back
       const open = interactive && o.online && !seat.player;
-      plate.textContent = open ? "Open seat" : seat.id === viewer && interactive ? `${seat.name} (you)` : seat.name;
+      const label = open ? "Open seat" : seat.id === viewer && interactive ? `${seat.name} (you)` : seat.name;
+      const edit = interactive && seat.id === o.editSeat;
+      // rebuilt only when what it says changes
+      if (plate.__sig !== label + edit) {
+        plate.__sig = label + edit;
+        plate.replaceChildren(label);
+        // your own seat has a pencil for changing your name and color
+        if (edit) {
+          const b = el("button", "ct-plate-edit", plate);
+          b.type = "button"; b.title = "Change your name or color"; b.setAttribute("aria-label", b.title);
+          b.innerHTML = `<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4z"/><path d="M14 6l4 4"/></svg>`;
+        }
+      }
       plate.classList.toggle("ct-open", !!open);
       plate.classList.toggle("ct-away", !!(interactive && o.online && seat.player && !o.online.has(seat.player)));
-      // your own seat has a pencil for changing your name and color
-      if (interactive && seat.id === o.editSeat) {
-        const b = el("button", "ct-plate-edit", plate);
-        b.type = "button"; b.title = "Change your name or color"; b.setAttribute("aria-label", b.title);
-        b.innerHTML = `<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4z"/><path d="M14 6l4 4"/></svg>`;
-      }
       // on the rail in front of the seat, level on screen
       plate.style.transform = `translate(${px}px, ${CY + r * Math.sin(a)}px) rotate(${-frame.rot * DEG}deg) translate(-50%, -50%)`;
       plate.classList.toggle("ct-me", seat.id === viewer);
     });
+    K.done();
   }
 
   // the tab under each stack: how many cards, and a handle to move the whole stack
   function renderGrips(st, o) {
-    gripLayer.replaceChildren();
+    const K = keyed(gripLayer);
     const carriedNow = new Set(dragsOf(o).flatMap((d) => d.cards ?? []));
     for (const p of Object.values(st.piles)) {
       // a card being carried off the stack no longer counts
       const rest = p.cards.filter((id) => !carriedNow.has(id));
       if (rest.length < 2) continue;
-      const g = el("div", "ct-grip", gripLayer);
+      const g = K.get(p.id, "div", "ct-grip");
       g.dataset.pile = p.id;
-      g.textContent = rest.length;
+      setText(g, String(rest.length));
       g.title = "Press and hold the stack, or drag this, to move the whole stack. Click for shuffle, deal and more.";
       g.style.zIndex = (springs.get(rest.at(-1))?.tgt.z ?? 0) + 1;
       g.classList.toggle("ct-carried", o.drag?.pile === p.id);
@@ -494,13 +501,13 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
       };
       follow(); followers.push(follow);
     }
+    K.done();
   }
 
   // each hand's area, always drawn (it lights up while you carry cards into it), and the gap
   // carried cards would fill
   function renderZones(st, place, o) {
-    zoneLayer.replaceChildren();
-    zoneEyeLayer.replaceChildren();
+    const KZ = keyed(zoneLayer), KE = keyed(zoneEyeLayer);
     const was = slotEl.classList.contains("ct-on");
     slotEl.classList.toggle("ct-on", !!place.slot);
     if (place.slot) {
@@ -514,7 +521,7 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
     st.seats.forEach((seat, i) => {
       const own = seat.id === viewer;
       const c = handCenter(i, n, own ? OWN_HAND_R : HAND_R);
-      const z = el("div", "ct-zone", zoneLayer);
+      const z = KZ.get(seat.id, "div", "ct-zone");
       z.style.setProperty("--seat", seat.color);
       const a = seatAngle(i, n);
       z.style.transform = `translate(${c.x}px, ${c.y}px) rotate(${(a - Math.PI / 2) * DEG}deg) translate(-50%, -50%)`;
@@ -529,13 +536,13 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
         const locked = handLocked(st, seat.id);
         const lx = c.x - right.x * (reach.along - CORNER_IN) - outward.x * (reach.across - CORNER_IN), ly = c.y - right.y * (reach.along - CORNER_IN) - outward.y * (reach.across - CORNER_IN);
         const can = own || view.lockAll;
-        const lock = el(can ? "button" : "div", "ct-lock", zoneEyeLayer);
+        const lock = KE.get(`lock:${seat.id}`, can ? "button" : "div", "ct-lock");
         lock.style.setProperty("--seat", seat.color);
         lock.classList.toggle("ct-locked", locked);
         lock.classList.toggle("ct-lock-mine", own);
         lock.classList.toggle("ct-lock-click", can);
         lock.dataset.seat = seat.id;
-        lock.innerHTML = lockSVG(locked);
+        setHTML(lock, lockSVG(locked));
         const whose = own ? "Your hand" : `${seat.name}'s hand`;
         lock.dataset.tooltip = (locked ? `${whose} is locked: only ${own ? "you" : seat.name} can take from it` : `${whose} is open: anyone can take from it`) +
           (can ? `. Click to ${locked ? "unlock" : "lock"} it` : "");
@@ -546,12 +553,13 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
       if (!st.hands[seat.id].length) return;
       const shown = !!st.shownHands?.[seat.id];
       const ex = c.x + right.x * (reach.along - CORNER_IN) - outward.x * (reach.across - CORNER_IN), ey = c.y + right.y * (reach.along - CORNER_IN) - outward.y * (reach.across - CORNER_IN);
-      const eye = el("div", "ct-eye ct-zone-eye", zoneEyeLayer);
-      eye.innerHTML = eyeSVG(shown);
+      const eye = KE.get(`eye:${seat.id}`, "div", "ct-eye ct-zone-eye");
+      setHTML(eye, eyeSVG(shown));
       eye.classList.toggle("ct-eye-open", shown);
       eye.title = shown ? "Everyone can see this hand" : own ? "Only you can see your hand" : `Only ${seat.name} can see this hand`;
       eye.style.transform = `translate(${ex}px, ${ey}px) rotate(${-frame.rot * DEG}deg) translate(-50%, -50%)`;
     });
+    KZ.done(); KE.done();
   }
 
   // a point above a card's top edge (along: how far right of its middle), in table coordinates
@@ -562,13 +570,13 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
 
   // a name tag by whatever each player is touching
   function renderTags(st, place, o) {
-    tagLayer.replaceChildren();
+    const K = keyed(tagLayer);
     for (const p of o.presence ?? []) {
       const s = seatOf(st, p.seat);
       if (!s || !p.cards.length) continue;
-      const tag = el("div", "ct-tag", tagLayer);
+      const tag = K.get(p.seat, "div", "ct-tag");
       tag.style.setProperty("--seat", s.seat.color);
-      tag.textContent = p.seat === viewer ? "You" : s.seat.name;
+      setText(tag, p.seat === viewer ? "You" : s.seat.name);
       // a card riding in a row: the tag goes above it, clear of the cards beside it
       const rider = place.get(p.cards.at(-1))?.riding;
       const follow = () => {
@@ -586,13 +594,14 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
       };
       follow(); followers.push(follow);
     }
+    K.done();
   }
 
   // An eye on whatever you're holding or handling: struck through while only you see its face,
   // open when everyone can. Carried cards, a card or a stack you're peeking at, a stack you're
   // moving (each hand's area has its own).
   function renderEyes(st, place, o) {
-    eyeLayer.replaceChildren();
+    const K = keyed(eyeLayer);
     for (const [id, pl] of place) {
       const card = st.cards[id];
       let open, to = null;
@@ -614,8 +623,8 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
         open = card.faceUp;
       } else if (!pl.hand && !card.faceUp && card.privateTo === viewer) open = false;
       else continue;
-      const eye = el("div", "ct-eye", eyeLayer);
-      eye.innerHTML = eyeSVG(open);
+      const eye = K.get(id, "div", "ct-eye");
+      setHTML(eye, eyeSVG(open));
       eye.title = pl.peeking ? "Only you can see these cards"
         : !open ? (pl.lifted ? "Nobody else can see this stack's cards" : "Only you can see this card")
         : to ? `${to.name} can see this card` : "Everyone can see this card";
@@ -638,6 +647,7 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
       };
       follow(); followers.push(follow);
     }
+    K.done();
   }
 
   return view;
@@ -655,6 +665,31 @@ export function lockSVG(locked) {
   return `<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
     <path d="${shackle}"/><rect x="6.5" y="11" width="11" height="8.5" rx="1.8" fill="currentColor" stroke-width="1.6"/></svg>`;
 }
+
+// A layer's children kept from one render to the next by key, so only what changed gets
+// touched (rebuilding them on every pointer move made the browser repaint them all each frame).
+function keyed(layer) {
+  const old = new Map();
+  for (const c of layer.children) old.set(c.__key, c);
+  const used = new Set();
+  return {
+    get(key, tag, cls) {
+      let e = old.get(key);
+      if (!e || e.tagName !== tag.toUpperCase()) {
+        e?.remove();
+        e = document.createElement(tag); e.__key = key;
+        layer.appendChild(e);
+        old.set(key, e);
+      }
+      if (e.className !== cls) e.className = cls;
+      used.add(e);
+      return e;
+    },
+    done() { for (const c of [...layer.children]) if (!used.has(c)) c.remove(); },
+  };
+}
+function setHTML(e, html) { if (e.__html !== html) { e.innerHTML = html; e.__html = html; } }
+function setText(e, t) { if (e.textContent !== t) e.textContent = t; }
 
 function el(tag, cls, parent) {
   const e = document.createElement(tag);

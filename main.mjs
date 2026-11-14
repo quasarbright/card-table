@@ -16,6 +16,23 @@ document.body.insertAdjacentHTML("afterbegin", suitDefs());
 // tab is then its own player, so it keeps its identity per tab
 const params = new URLSearchParams(location.search);
 const NET = params.get("net") === "local" ? "local" : "trystero";
+
+// ?fps: frames drawn in the last second, and the slowest frame in it, in the corner
+if (params.has("fps")) {
+  const meter = document.createElement("div");
+  meter.className = "ct-fps";
+  document.body.appendChild(meter);
+  const times = [];
+  const count = (t) => {
+    times.push(t);
+    while (times[0] < t - 1000) times.shift();
+    let worst = 0;
+    for (let i = 1; i < times.length; i++) worst = Math.max(worst, times[i] - times[i - 1]);
+    meter.textContent = `${times.length} fps, slowest ${worst.toFixed(0)} ms`;
+    requestAnimationFrame(count);
+  };
+  requestAnimationFrame(count);
+}
 const store = NET === "local" ? sessionStorage : localStorage;
 const read = (k) => { try { return store.getItem(`card-table:${k}`); } catch { return null; } };
 const write = (k, v) => { try { store.setItem(`card-table:${k}`, v); } catch {} };
@@ -61,7 +78,13 @@ function onChange(next, fx, by) {
 }
 function undo() { if (!drag) { closeMenu(); session?.undo(); } }
 
+// Pointer moves can come faster than the screen redraws: draw once, on the next frame.
+let drawFrame = 0;
+function drawSoon() {
+  if (!drawFrame) drawFrame = requestAnimationFrame(() => { drawFrame = 0; draw(); });
+}
 function draw(o = {}) {
+  if (drawFrame) { cancelAnimationFrame(drawFrame); drawFrame = 0; }
   for (const id of peeking) if (!state.piles[id]) { peeking.delete(id); sendPeek(); }
   for (const [seat] of peekers) if (!online.includes(state.seats.find((x) => x.id === seat)?.player)) peekers.delete(seat);
   placeHandBar();
@@ -408,7 +431,7 @@ tableEl.addEventListener("pointermove", (e) => {
     drag.inHand = drag.from?.hand === me && drag.target?.hand === me;
     // over someone else's hand a card shows its back; flip it there to show it to just them
     if (drag.from?.hand && drag.target?.hand && drag.target.hand !== me && drag.target.hand !== was) drag.faceUp = false;
-    draw();
+    drawSoon();
     sendDrag();
   }
 });
@@ -490,7 +513,7 @@ tableEl.addEventListener("pointerleave", () => { if (!drag) setHover(null); });
 function setHover(t) {
   const was = hovered?.card;
   hovered = t;
-  if (t?.card !== was && !drag && !pending) draw();
+  if (t?.card !== was && !drag && !pending) drawSoon();
 }
 
 tableEl.addEventListener("contextmenu", (e) => {
