@@ -128,6 +128,27 @@
     .ct-plate.ct-open { color: var(--muted); border-style: dashed; }
     .ct-plate.ct-away { opacity: .5; }
 
+    /* a stack of chips: a zero-size box at the point under its bottom chip's middle */
+    .ct-chips {
+      position: absolute; left: 0; top: 0; width: 0; height: 0; transform-origin: 0 0;
+      transition: transform .22s cubic-bezier(.2,.8,.3,1);
+    }
+    .ct-still .ct-chips, .ct-chips.ct-moving { transition: none; }
+    .ct-chips-art { position: absolute; left: -22px; bottom: -9px; cursor: grab; line-height: 0;
+      filter: drop-shadow(0 3px 3px rgba(0,0,0,.35)); }
+    .ct-chips.ct-carried .ct-chips-art { cursor: grabbing; filter: drop-shadow(0 12px 10px rgba(0,0,0,.4)); }
+    .ct-chips-art > svg { display: block; }
+    .ct-chips-amt {
+      position: absolute; left: 0; top: 10px; transform: translateX(-50%); white-space: nowrap; cursor: grab;
+      font: calc(12px / var(--s, 1)) var(--font-display); color: var(--ivory); font-variant-numeric: tabular-nums;
+      padding: .1em .6em .15em; border-radius: 999px;
+      background: rgba(8,24,16,.72); border: calc(1px / var(--s, 1)) solid rgba(242,237,224,.18);
+    }
+    .ct-chips.ct-ringed .ct-chips-amt { border-color: var(--ring); box-shadow: 0 0 0 calc(1.5px / var(--s, 1)) var(--ring); }
+    .ct-chips.ct-ringed .ct-chips-art { filter: drop-shadow(0 0 1.5px var(--ring)) drop-shadow(0 0 1.5px var(--ring)) drop-shadow(0 12px 10px rgba(0,0,0,.4)); }
+    .ct-chips.ct-target .ct-chips-amt { border-color: var(--ivory); background: rgba(242,237,224,.25); }
+    .ct-chips.ct-target .ct-chips-art { filter: drop-shadow(0 0 3px var(--ivory)) drop-shadow(0 3px 3px rgba(0,0,0,.35)); }
+    .ct-chips .ct-eye { left: 14px; top: -40px; }
     .ct-grip {
       transform-origin: 0 0;
       position: absolute; left: 0; top: 0; cursor: grab;
@@ -216,6 +237,11 @@
     .ct-step:hover:not(:disabled) { background: rgba(29,28,34,.07); }
     .ct-step:disabled { opacity: .3; cursor: default; }
     .ct-count { font: 2.1rem/1 var(--font-display); min-width: 1.6ch; text-align: center; font-variant-numeric: tabular-nums; }
+    .ct-menu input.ct-count-in { width: 6.4ch; min-width: 0; flex: 1; color: #1d1c22; background: #fff; border: 1px solid rgba(29,28,34,.22); border-radius: 8px; padding: 4px 6px; font: 1.8rem/1 var(--font-display); text-align: center; box-shadow: none; }
+    .ct-menu input.ct-count-in:focus { outline: 2px solid #1d1c22; outline-offset: 1px; border-color: transparent; }
+    .ct-presets { display: flex; flex-wrap: wrap; gap: 6px; margin: -4px 0 12px; }
+    .ct-preset { font: 600 .82rem var(--font-ui); color: inherit; background: rgba(29,28,34,.07); border: 0; border-radius: 7px; padding: 6px 10px; cursor: pointer; }
+    .ct-preset:hover { background: rgba(29,28,34,.14); }
     .ct-unit { font-size: .85rem; color: rgba(29,28,34,.62); }
     .ct-pop-actions { display: flex; flex-direction: column; gap: 6px; }
     .ct-act {
@@ -431,6 +457,7 @@
   <div class="control-bar ct-bar">
     <button class="ct-bar-btn" id="undo" disabled title="Take back the last change to the table, whoever made it (⌘Z or Ctrl+Z)"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>Undo</button>
     <button class="ct-bar-btn ct-bar-share" id="share" hidden title="Get the link that lets other people sit down at this table">Invite</button>
+    <button class="ct-bar-btn" id="chips" hidden title="Make chips: the same amount for every player, or (right-click the felt) a stack anywhere on the table">New chips</button>
     <button class="ct-bar-btn" id="gather" title="Collect every card, from the table and all hands, into one face-down deck in the middle">Gather cards</button>
     <div class="ct-group" title="Sit in another seat to see the table the way that player does: their hand, and the cards only they can see.">
       <span class="ct-label">View as</span>

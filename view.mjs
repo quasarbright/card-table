@@ -2,7 +2,7 @@
 // renders; each one springs toward where it belongs every frame, so every move (a deal, a hand
 // opening a gap, a dragged card) is continuous. The same view runs the main table and the small
 // tables in the about modal.
-import { TABLE_W, TABLE_H, CX, CY, FELT_H, RAIL, CARD_W, CARD_H, seatAngle, seatSpot, seatRoom, handCenter, canSee, tiltedToward, locate, handLocked } from "./table.mjs";
+import { TABLE_W, TABLE_H, CX, CY, FELT_H, RAIL, CARD_W, CARD_H, seatAngle, seatSpot, seatRoom, handCenter, canSee, tiltedToward, locate, handLocked, handChips } from "./table.mjs";
 import { faceSVG, backSVG } from "./faces.mjs";
 
 const DEG = 180 / Math.PI;
@@ -35,6 +35,13 @@ export function handGap(own, k, shown = false, room = Infinity) {
   if (own || shown) return Math.min(own ? 46 : 38, Math.min(own ? 640 : 300, fit) / Math.max(1, k - 1));
   return Math.min(20, Math.min(260, fit) / Math.max(1, k - 1));
 }
+// A hand's chip stacks stand in a row at its right end; the cards make room, centered on what's
+// left. m stacks take this much of the hand's length:
+export const CHIP_STEP = 50;
+export const chipRowWidth = (m) => (m ? m * CHIP_STEP + 6 : 0);
+// the room a seat's cards have, with its chips beside them
+export const cardRoom = (st, si, n) => seatRoom(si, n) - chipRowWidth(handChips(st, st.seats[si].id).length);
+
 // how far along and across from a hand's middle it still takes drops
 export function handReach(own, k, shown = false, room = Infinity) {
   const along = Math.max(0, k - 1) * handGap(own, k, shown, room) / 2 + CARD_W / 2 + 22;
@@ -57,6 +64,7 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
   stage.style.width = `${TABLE_W}px`; stage.style.height = `${TABLE_H}px`;
 
   const cardEls = new Map();   // card id → element
+  const chipEls = new Map();   // chip stack id → element
   const shown = new Map();     // card id → "face" | "back" (what the viewer currently sees)
   let frame = { cx: 0, cy: 0, s: 1, rot: 0 };
   let state = null, opts = {};
@@ -85,7 +93,7 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
       const c = Math.cos(-frame.rot), s = Math.sin(-frame.rot);
       return { x: dx * c - dy * s, y: dx * s + dy * c };
     },
-    layout, render, cardEl: (id) => cardEls.get(id), placement, handSlot,
+    layout, render, cardEl: (id) => cardEls.get(id), chipEl: (id) => chipEls.get(id), placement, handSlot, chipPlacement: (st) => chipPlacement(st, opts),
     seatIndex(seatId) { return state.seats.findIndex((s) => s.id === seatId); },
   };
 
@@ -114,6 +122,7 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
   // pointer; a hand being dropped into opens a gap where they'd land (with a ghost `slot` for
   // yours).
   function placement(st, o = {}) {
+    state = st;
     const out = new Map();
     const n = st.seats.length;
     const drags = dragsOf(o);
@@ -208,7 +217,7 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
         const q = handSlot(si, n, own, i, list.length, reorder ? (side < 0 ? -1.2 : 0) : side, shown);
         if (id === SLOT) {
           if (reorder) {
-            const a = seatAngle(si, n), reach = handGap(own, list.length, shown, seatRoom(si, n)) * 0.45;
+            const a = seatAngle(si, n), reach = handGap(own, list.length, shown, cardRoom(st, si, n)) * 0.45;
             rideIn(into, { ...q, z: 10000 + si * 100 + i },
               { hand: seat.id, right: { x: Math.sin(a), y: -Math.cos(a) }, up: { x: -Math.cos(a), y: -Math.sin(a) }, raise: 16, min: -reach, max: reach });
           }
@@ -244,10 +253,10 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
   function handSlot(si, n, own, i, k, aside = 0, shown = false) {
     const a = seatAngle(si, n);
     // a shown hand slides toward the middle so its cards' tops stick out of the hand's area
-    const room = seatRoom(si, n);
+    const room = cardRoom(state, si, n), shift = -chipRowWidth(handChips(state, state.seats[si].id).length) / 2;
     const hc = handCenter(si, n, (own ? OWN_HAND_R : HAND_R) - (shown ? handReach(own, k, false, room).across + 22 - CARD_H / 2 : 0));
     const t = i - (k - 1) / 2;
-    const along = t * handGap(own, k, shown, room) + aside * (own ? 26 : 18);
+    const along = t * handGap(own, k, shown, room) + aside * (own ? 26 : 18) + shift;
     const fan = shown ? 0 : t * Math.min(4, 40 / Math.max(1, k)) / DEG;
     // a shallow arch: the same curve for any hand of a dozen or more, never deeper than 12
     const half = Math.max(1, (k - 1) / 2), u = t / half;
@@ -440,9 +449,70 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
       e.classList.toggle("ct-touched", touch.has(id));
     }
     for (const [id, e] of cardEls) if (!live.has(id)) { e.remove(); cardEls.delete(id); shown.delete(id); springs.delete(id); }
+    renderChips(st, o);
     followers = [];
     if (interactive) { renderGrips(st, o); renderZones(st, place, o); renderTags(st, place, o); renderEyes(st, place, o); }
     wake();
+  }
+
+  // Where every chip stack stands: the point under the middle of its bottom chip. On the table
+  // where it was put; in a hand, in the row at the hand's right end; carried, under the pointer.
+  function chipPlacement(st, o) {
+    const out = new Map();
+    const drags = dragsOf(o);
+    const n = st.seats.length;
+    const down = (() => { const c = Math.cos(-frame.rot), sn = Math.sin(-frame.rot); return { x: -sn, y: c }; })();
+    const onTable = Object.values(st.chips ?? {}).filter((c) => !Object.values(st.chipHands ?? {}).some((l) => l.includes(c.id)));
+    onTable.sort((a, b) => a.z - b.z).forEach((c, k) => out.set(c.id, { x: c.x, y: c.y, z: 4000 + k }));
+    st.seats.forEach((seat, si) => {
+      const list = handChips(st, seat.id);
+      if (!list.length) return;
+      const own = seat.id === viewer, a = seatAngle(si, n);
+      const right = { x: Math.sin(a), y: -Math.cos(a) };
+      const c = handCenter(si, n, own ? OWN_HAND_R : HAND_R);
+      const W = chipRowWidth(list.length);
+      const cardsReach = handReach(own, st.hands[seat.id].length, !!st.shownHands?.[seat.id], cardRoom(st, si, n)).along;
+      list.forEach((id, j) => {
+        const along = -W / 2 + cardsReach + (j + 0.5) * CHIP_STEP - 16;
+        out.set(id, { x: c.x + right.x * along + down.x * 18, y: c.y + right.y * along + down.y * 18, z: 10000 + si * 100 + 90 + j, hand: seat.id });
+      });
+    });
+    for (const d of drags) if (d.chip && out.has(d.chip)) out.set(d.chip, { x: d.x, y: d.y, z: 20000, carried: true, drag: d });
+    return out;
+  }
+
+  function renderChips(st, o) {
+    const place = chipPlacement(st, o);
+    const live = new Set();
+    for (const [id, pl] of place) {
+      const chips = st.chips[id];
+      live.add(id);
+      let e = chipEls.get(id);
+      if (!e) {
+        e = el("div", "ct-chips", cardLayer);
+        e.dataset.chip = id;
+        el("div", "ct-chips-art", e);
+        el("div", "ct-chips-amt", e);
+        chipEls.set(id, e);
+      }
+      setHTML(e.firstChild, chipArt(chips.amount));
+      setText(e.children[1], chips.amount.toLocaleString("en-US"));
+      e.style.zIndex = pl.z;
+      // standing up on screen, whichever way the table is turned
+      e.style.transform = `translate(${pl.x}px, ${pl.y}px) rotate(${-frame.rot * DEG}deg) scale(${pl.carried ? 1.08 : 1})`;
+      e.classList.toggle("ct-moving", !!pl.carried);
+      e.classList.toggle("ct-carried", !!pl.drag?.local);
+      e.classList.toggle("ct-target", o.target?.stack === id);
+      // whoever is carrying it wears it in their color, with an eye: everyone sees chips
+      const ringSeat = pl.carried ? (pl.drag.local ? viewer : pl.drag.seat) : null;
+      const ring = ringSeat ? seatOf(st, ringSeat)?.seat.color : null;
+      e.style.setProperty("--ring", ring ?? "transparent");
+      e.classList.toggle("ct-ringed", !!ring);
+      let eye = e.querySelector(".ct-eye");
+      if (ring && !eye) { eye = el("div", "ct-eye ct-eye-open", e); eye.innerHTML = eyeSVG(true); eye.title = "Everyone can see chips"; }
+      if (!ring && eye) eye.remove();
+    }
+    for (const [id, e] of chipEls) if (!live.has(id)) { e.remove(); chipEls.delete(id); }
   }
 
   function renderSeats(st, o) {
@@ -528,7 +598,9 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
       const a = seatAngle(i, n);
       z.style.transform = `translate(${c.x}px, ${c.y}px) rotate(${(a - Math.PI / 2) * DEG}deg) translate(-50%, -50%)`;
       const incoming = o.target?.hand === seat.id ? Math.max(1, o.drag?.cards?.length ?? st.piles[o.drag?.pile]?.cards.length ?? 1) : 1;
-      const reach = handReach(own, st.hands[seat.id].length + incoming, !!st.shownHands?.[seat.id], seatRoom(i, n));
+      const chipW = chipRowWidth(handChips(st, seat.id).length);
+      const reach0 = handReach(own, st.hands[seat.id].length + incoming, !!st.shownHands?.[seat.id], cardRoom(st, i, n));
+      const reach = { along: reach0.along + chipW / 2, across: reach0.across };
       z.style.width = `${2 * reach.along}px`; z.style.height = `${2 * reach.across}px`;
       z.classList.toggle("ct-target", o.target?.hand === seat.id);
       const right = { x: Math.sin(a), y: -Math.cos(a) }, outward = { x: Math.cos(a), y: Math.sin(a) };
@@ -661,6 +733,38 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
   }
 
   return view;
+}
+
+// A stack of chips, seen from a little above: a column of them, worth `amount` in all, made of
+// as few chips as the denominations allow (the biggest at the bottom). A tall stack shows a
+// sample of its chips, so it never stands taller than ~14 chips.
+// (no chips worth more than 100 below 5,000, so a thousand still looks like a stack)
+const DENOMS = [[1000, "#7a5bd0"], [500, "#d08a2a"], [100, "#25242a"], [25, "#2b7d5c"], [5, "#c4413b"], [1, "#e7e1d1"]];
+export function chipColors(amount) {
+  const out = [];
+  const top = amount < 5000 ? 100 : amount < 20000 ? 500 : 1000;
+  for (const [v, color] of DENOMS.filter(([v]) => v <= top)) for (let k = Math.floor(amount / v); k > 0; k--) { out.push(color); amount -= v; }
+  return out;
+}
+const CHIP_RX = 20, CHIP_RY = 7, CHIP_T = 4.2, CHIP_MAX = 14;
+function chipArt(amount) {
+  let all = chipColors(amount);
+  if (all.length > CHIP_MAX) all = Array.from({ length: CHIP_MAX }, (_, i) => all[Math.floor((i * (all.length - 1)) / (CHIP_MAX - 1))]);
+  const n = all.length, w = CHIP_RX * 2 + 4, h = CHIP_RY * 2 + CHIP_T * (n + 1) + 2;
+  const cx = w / 2;
+  let g = "";
+  all.forEach((color, i) => {
+    const y = h - CHIP_RY - 2 - CHIP_T - i * CHIP_T; // the chip's top face
+    const light = color === "#e7e1d1", edge = light ? "#b9b2a0" : "#f2ede0";
+    // its side: the color, notched with light edge spots, darker below
+    g += `<path d="M${cx - CHIP_RX} ${y}v${CHIP_T}a${CHIP_RX} ${CHIP_RY} 0 0 0 ${CHIP_RX * 2} 0v${-CHIP_T}z" fill="${color}"/>` +
+      `<path d="M${cx - CHIP_RX} ${y + CHIP_T / 2}a${CHIP_RX} ${CHIP_RY} 0 0 0 ${CHIP_RX * 2} 0" fill="none" stroke="${edge}" stroke-width="${CHIP_T - 1.4}" stroke-dasharray="4.5 6.5"/>` +
+      `<path d="M${cx - CHIP_RX} ${y + CHIP_T}a${CHIP_RX} ${CHIP_RY} 0 0 0 ${CHIP_RX * 2} 0" fill="none" stroke="rgba(0,0,0,.45)" stroke-width=".8"/>` +
+      `<ellipse cx="${cx}" cy="${y}" rx="${CHIP_RX}" ry="${CHIP_RY}" fill="${color}" stroke="rgba(0,0,0,.35)" stroke-width=".6"/>`;
+    if (i === n - 1) g += `<ellipse cx="${cx}" cy="${y}" rx="${CHIP_RX - 4.5}" ry="${CHIP_RY - 1.6}" fill="none" stroke="${edge}" stroke-width="1" stroke-dasharray="3 3.2"/>` +
+      `<ellipse cx="${cx}" cy="${y}" rx="${CHIP_RX - 8}" ry="${CHIP_RY - 3}" fill="${edge}" opacity=".18"/>`;
+  });
+  return `<svg viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" aria-hidden="true">${g}</svg>`;
 }
 
 // an eye, or the same eye struck through

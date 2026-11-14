@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { newTable, apply, locate, canSee, tiltedToward, shuffledOrder, checkConservation, CX, CY } from "./table.mjs";
+import { newTable, apply, locate, canSee, tiltedToward, shuffledOrder, checkConservation, chipTotal, chipHand, handChips, touchesLockedHand, needsHost, CX, CY } from "./table.mjs";
 
 const run = (state, ...actions) => actions.reduce((s, a) => {
   const next = apply(s, a);
@@ -213,4 +213,66 @@ test("a card can go into the middle of a stack, counted before it leaves", () =>
   s = apply(s, { type: "moveCards", cards: [c], to: { pile: "row", index: 4 } });
   assert.deepEqual(s.piles.row.cards, [a, d, b, c]);
   checkConservation(s);
+});
+
+// ---- chips ----
+const sat = (s, ...seats) => seats.reduce((t, seat, k) => apply(t, { type: "sit", seat, player: "p" + k, name: seat }), s);
+
+test("chips: made, moved, merged; the total only changes when the host makes or removes them", () => {
+  let s = sat(newTable(3), "s0", "s1", "s2");
+  s = apply(s, { type: "makeChips", id: "bank", amount: 1000, to: { x: CX, y: CY } });
+  assert.equal(chipTotal(s), 1000);
+  s = apply(s, { type: "takeChips", from: "bank", amount: 250, id: "a", to: { hand: "s0" } });
+  s = apply(s, { type: "takeChips", from: "bank", amount: 100, id: "b", to: { hand: "s0" } });
+  assert.deepEqual(handChips(s, "s0"), ["a", "b"]);
+  assert.equal(s.chips.bank.amount, 650);
+  // a bet out of the hand onto the felt, then onto the pot
+  s = apply(s, { type: "takeChips", from: "a", amount: 40, id: "bet", to: { x: CX, y: CY + 100 } });
+  s = apply(s, { type: "moveChips", id: "bet", to: { stack: "bank" } });
+  assert.equal(s.chips.bet, undefined);
+  assert.equal(s.chips.bank.amount, 690);
+  assert.equal(s.chips.a.amount, 210);
+  assert.equal(chipTotal(s), 1000);
+  // taking all of a stack moves the stack itself
+  s = apply(s, { type: "takeChips", from: "b", amount: 100, id: "x", to: { hand: "s1" } });
+  assert.equal(chipHand(s, "b"), "s1");
+  assert.equal(s.chips.x, undefined);
+  s = apply(s, { type: "removeChips", id: "b" });
+  assert.equal(chipTotal(s), 900);
+});
+
+test("chips: amounts are whole numbers, never more than the stack has", () => {
+  let s = apply(newTable(2), { type: "makeChips", id: "c", amount: 10, to: { x: CX, y: CY } });
+  for (const amount of [0, -3, 2.5, 11]) assert.throws(() => apply(s, { type: "takeChips", from: "c", amount, id: "d", to: { hand: "s0" } }));
+  assert.throws(() => apply(s, { type: "makeChips", id: "e", amount: 1.5, to: { x: CX, y: CY } }));
+});
+
+test("chips: dealt to each seat while the stack lasts", () => {
+  let s = sat(newTable(3), "s0", "s1", "s2");
+  s = apply(s, { type: "makeChips", id: "c", amount: 250, to: { x: CX, y: CY } });
+  s = apply(s, { type: "dealChips", from: "c", amount: 100, seats: ["s1", "s2", "s0"], ids: ["d1", "d2", "d3"] });
+  assert.equal(s.chips.d1.amount, 100);
+  assert.equal(s.chips.d2.amount, 100);
+  assert.equal(s.chips.d3, undefined);
+  assert.equal(s.chips.c.amount, 50);
+  assert.equal(chipTotal(s), 250);
+});
+
+test("chips: a locked hand's chips are its player's; only the host makes chips", () => {
+  let s = sat(newTable(2), "s0", "s1");
+  s = apply(s, { type: "makeChips", id: "c", amount: 50, to: { hand: "s1" } });
+  assert.equal(touchesLockedHand(s, { type: "takeChips", from: "c", amount: 5, id: "d", to: { hand: "s0" } }, "s0"), true);
+  assert.equal(touchesLockedHand(s, { type: "takeChips", from: "c", amount: 5, id: "d", to: { hand: "s0" } }, "s1"), false);
+  s = apply(s, { type: "setHandLocked", seat: "s1", locked: false });
+  assert.equal(touchesLockedHand(s, { type: "moveChips", id: "c", to: { x: CX, y: CY } }, "s0"), false);
+  assert.equal(needsHost({ type: "batch", actions: [{ type: "makeChips", id: "z", amount: 1, to: { hand: "s0" } }] }), true);
+  assert.equal(needsHost({ type: "moveChips", id: "c", to: { hand: "s0" } }), false);
+});
+
+test("chips: a removed seat's chips come to the middle", () => {
+  let s = apply(newTable(3), { type: "makeChips", id: "c", amount: 50, to: { hand: "s2" } });
+  s = apply(s, { type: "setSeats", n: 2 });
+  assert.equal(chipHand(s, "c"), null);
+  assert.equal(s.chips.c.amount, 50);
+  assert.equal(s.chipHands.s2, undefined);
 });

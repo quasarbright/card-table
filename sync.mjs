@@ -13,7 +13,7 @@
 //   session.seat             the seat you're sitting in
 //   session.dispatch(action, fx)   fx: how to animate it (passed along to everyone)
 //   session.undo(), session.canUndo()   take back the table's last change, whoever made it
-import { apply, MAX_SEATS, touchesLockedHand } from "./table.mjs";
+import { apply, MAX_SEATS, touchesLockedHand, needsHost } from "./table.mjs";
 
 const HISTORY = 300;
 // who sits where isn't part of the game: undo never takes it back, and it's written into
@@ -37,6 +37,8 @@ export function hostSession(net, state, me, hooks) {
       // the host may lock or unlock anyone's hand
       const hostLocking = action.type === "setHandLocked" && by === seatOf(me.player);
       if (by && !hostLocking && touchesLockedHand(state, action, by)) throw new Error("locked hand");
+      // only the host makes chips or takes them away
+      if (by && by !== seatOf(me.player) && needsHost(action)) throw new Error("host only");
       next = apply(state, action);
     } catch {
       if (from) net.send("reject", { id }, from);

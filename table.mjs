@@ -13,7 +13,10 @@
 //     look: squared up (none), "few" (loosely heaped, the top few showing) or "spread" (in a row)
 //   hands: { [seatId]: [cardId, …] },             // left to right, as the owner sees them
 //   shownHands: { [seatId]: true },               // hands laid flat, face up, for everyone
-//   nextZ,                                        // stacking order for piles
+//   chips: { [id]: { id, amount, x, y, z } },     // stacks of chips: all that matters is how much
+//                                                 //   (a whole number); x, y only on the table
+//   chipHands: { [seatId]: [chipId, …] },         // the stacks in a hand, left to right
+//   nextZ,                                        // stacking order for piles and chip stacks
 // }
 //
 // Table coordinates: the table is a wide rounded rectangle TABLE_W × TABLE_H, its middle at
@@ -158,11 +161,22 @@ export function tiltedToward(state, cardId) {
 // { type: "gather", id, x, y, rot }          every card into one face-down stack
 // { type: "setSeats", n }                    seats grow as people sit down (removed seats' hands
 //                                            go to the middle)
+//
+// Chips. A chip stack goes `to` { x, y } on the table, { hand: seatId, index? } (into a hand,
+// at the end unless index), or { stack: id } (onto another stack: the two become one).
+// { type: "makeChips", id, amount, to }        new chips (the host only)
+// { type: "removeChips", id }                  a stack gone for good (the host only)
+// { type: "moveChips", id, to }                the whole stack
+// { type: "takeChips", from, amount, id, to }  some off a stack, as a new stack `id` (all of
+//                                              it moves the stack itself)
+// { type: "dealChips", from, amount, seats, ids }  `amount` to each seat's hand in turn, as new
+//                                              stacks ids[k], while the stack lasts
 
 export function apply(state, action) {
   const s = structuredClone(state);
   const fn = ACTIONS[action.type];
   if (!fn) throw new Error(`unknown action ${action.type}`);
+  s.chips ??= {}; s.chipHands ??= {};
   fn(s, action);
   return s;
 }
@@ -188,6 +202,48 @@ function recolor(s, seat, color) {
 }
 
 function raise(s, pileId) { s.piles[pileId].z = s.nextZ++; }
+
+// ---- chips ----
+const whole = (n) => Number.isInteger(n) && n > 0;
+// which hand a chip stack is in (null: on the table)
+export function chipHand(state, id) {
+  for (const [seat, list] of Object.entries(state.chipHands ?? {})) if (list.includes(id)) return seat;
+  return null;
+}
+// the stacks in a seat's hand
+export const handChips = (state, seat) => state.chipHands?.[seat] ?? [];
+// take a stack off the table or out of its hand, leaving it in `chips` (where it was in a hand)
+function lift(s, id) {
+  if (!s.chips[id]) throw new Error(`no chips ${id}`);
+  const seat = chipHand(s, id);
+  if (!seat) return null;
+  const i = s.chipHands[seat].indexOf(id);
+  s.chipHands[seat].splice(i, 1);
+  return { hand: seat, index: i };
+}
+// put `amount` down `to`, as stack `id` (unless it lands on another stack and joins it)
+function land(s, id, amount, to, from = null) {
+  if (to.stack) {
+    const t = s.chips[to.stack];
+    if (!t || to.stack === id) throw new Error("no stack to join");
+    t.amount += amount;
+    if (!chipHand(s, t.id)) t.z = s.nextZ++;
+    delete s.chips[id];
+    return;
+  }
+  const c = (s.chips[id] ??= { id, amount, x: 0, y: 0, z: 0 });
+  c.amount = amount;
+  if (to.hand) {
+    if (!s.hands[to.hand]) throw new Error(`no seat ${to.hand}`);
+    const list = (s.chipHands[to.hand] ??= []);
+    let index = to.index ?? list.length;
+    if (from?.hand === to.hand && from.index < index) index--;
+    list.splice(Math.max(0, Math.min(index, list.length)), 0, id);
+  } else {
+    if (!Number.isFinite(to.x) || !Number.isFinite(to.y)) throw new Error("chips need a place");
+    c.x = to.x; c.y = to.y; c.z = s.nextZ++;
+  }
+}
 
 const ACTIONS = {
   moveCards(s, { cards, to }) {
@@ -311,6 +367,31 @@ const ACTIONS = {
     s.piles[id] = { id, x, y, rot, z: 0, cards: all };
     raise(s, id);
   },
+  makeChips(s, { id, amount, to }) {
+    if (!whole(amount) || s.chips[id]) throw new Error("bad chips");
+    land(s, id, amount, to);
+  },
+  removeChips(s, { id }) { lift(s, id); delete s.chips[id]; },
+  moveChips(s, { id, to }) {
+    const from = lift(s, id);
+    land(s, id, s.chips[id].amount, to, from);
+  },
+  takeChips(s, { from, amount, id, to }) {
+    const c = s.chips[from];
+    if (!c || !whole(amount) || amount > c.amount) throw new Error("bad take");
+    if (amount === c.amount) return ACTIONS.moveChips(s, { id: from, to });
+    if (s.chips[id]) throw new Error(`chips ${id} exist`);
+    c.amount -= amount;
+    land(s, id, amount, to);
+  },
+  dealChips(s, { from, amount, seats, ids }) {
+    if (!whole(amount)) throw new Error("bad deal");
+    seats.forEach((seat, k) => {
+      const c = s.chips[from];
+      if (!c || c.amount < amount) return;
+      ACTIONS.takeChips(s, { from, amount, id: ids[k], to: { hand: seat } });
+    });
+  },
   setSeats(s, { n }) {
     n = Math.max(1, Math.min(MAX_SEATS, n));
     const seats = makeSeats(n);
@@ -325,6 +406,11 @@ const ACTIONS = {
     const hands = Object.fromEntries(seats.map((seat) => [seat.id, s.hands[seat.id] ?? []]));
     const keep = new Set(seats.map((seat) => seat.id));
     for (const c of Object.values(s.cards)) if (c.privateTo && !keep.has(c.privateTo)) c.privateTo = null;
+    // a removed seat's chips go to the middle too, one stack each
+    s.seats.slice(n).flatMap((seat) => s.chipHands[seat.id] ?? []).forEach((id, k) => {
+      Object.assign(s.chips[id], { x: CX - 120 + k * 50, y: CY + 110, z: s.nextZ++ });
+    });
+    s.chipHands = Object.fromEntries(Object.entries(s.chipHands).filter(([id]) => hands[id]));
     s.seats = seats; s.hands = hands;
     s.shownHands = Object.fromEntries(Object.entries(s.shownHands ?? {}).filter(([id]) => hands[id]));
     s.openHands = Object.fromEntries(Object.entries(s.openHands ?? {}).filter(([id]) => hands[id]));
@@ -348,12 +434,26 @@ export function touchesLockedHand(state, action, by) {
   if (action.type === "batch") return action.actions.some((a) => touchesLockedHand(state, a, by));
   if (action.type === "setHandLocked") return action.seat !== by;
   if (action.type === "setHandShown") return action.seat !== by && handLocked(state, action.seat);
+  const chipsFrom = { moveChips: action.id, takeChips: action.from, dealChips: action.from }[action.type];
+  if (chipsFrom) {
+    const hand = chipHand(state, chipsFrom);
+    return !!hand && hand !== by && handLocked(state, hand);
+  }
   if (!["moveCards", "flip", "setPrivate"].includes(action.type)) return false;
   return action.cards.some((id) => {
     const hand = locate(state, id)?.hand;
     return hand && hand !== by && handLocked(state, hand);
   });
 }
+
+// actions only the host may make: chips come from the bank and go back to it
+export function needsHost(action) {
+  if (action.type === "batch") return action.actions.some(needsHost);
+  return action.type === "makeChips" || action.type === "removeChips";
+}
+
+// how many chips there are in all
+export function chipTotal(state) { return Object.values(state.chips ?? {}).reduce((t, c) => t + c.amount, 0); }
 
 // a random order for a shuffle (made by whoever shuffles, then sent in the action)
 export function shuffledOrder(cards, random = Math.random) {
