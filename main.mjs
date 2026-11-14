@@ -2,7 +2,7 @@
 // actions (see table.mjs). A session (sync.mjs) applies them and keeps every player's table the
 // same; while you drag, where your cards are is streamed to everyone else as it happens.
 import { newTable, apply, shuffledOrder, locate, handCenter, seatAngle, handLocked, MAX_SEATS, RANKS, SUITS, CARD_W, CARD_H, TABLE_R, FELT_R } from "./table.mjs";
-import { createView, HAND_R, OWN_HAND_R, GRIP_REACH, handGap, handReach, spreadGap } from "./view.mjs";
+import { createView, HAND_R, OWN_HAND_R, GRIP_REACH, handGap, handReach, spreadGap, eyeSVG } from "./view.mjs";
 import { suitDefs } from "./faces.mjs";
 import { startAboutDiagram } from "./about.mjs";
 import { connect } from "./net.mjs";
@@ -152,7 +152,7 @@ function startHost(id, name, color) {
   netRef = net;
   online = [player];
   session = hostSession(net, st, { player, name }, {
-    onChange, save: hostSave(id), onRoster,
+    onChange, save: hostSave(id), onRoster, onAsk: (who) => toast(who, "asked"),
   });
   net.on("drag", onRemoteDrag);
   net.on("peek", onRemotePeek);
@@ -188,7 +188,10 @@ function startJoin(id, name, color) {
   net.start();
 }
 function onRoster(r) {
-  online = r.online; watchers = r.watchers;
+  // the host hears about each person who arrives to watch
+  const arrived = r.watchers.filter((w) => w.player !== player && !online.includes(w.player));
+  online = r.online; watchers = r.watchers; hostPlayer = r.host ?? hostPlayer;
+  if (session?.isHost) for (const w of arrived) toasts.set(w.player, "joined");
   onChange(state, null, null);
   renderWatchers();
 }
@@ -248,8 +251,9 @@ function cardTarget(id) {
     // a spread stack hands you the card you pointed at; any other, its top card
     return { card: spreadNow(p) ? id : p.cards.at(-1), pile: p.id };
   }
-  // someone else's locked hand is theirs alone
-  if (where.hand !== me && handLocked(state, where.hand)) return null;
+  // someone else's locked hand is theirs alone (a host looking from another seat is still
+  // themself, so their own hand stays theirs to take from)
+  if (where.hand !== session?.seat && handLocked(state, where.hand)) return null;
   return { card: id, hand: where.hand };
 }
 // the same target, after the table changed under it (a stack flipped, a card moved)
@@ -713,10 +717,10 @@ watchersEl.className = "ct-watchers";
 document.body.appendChild(watchersEl);
 function renderWatchers() {
   const host = !!session?.isHost, others = watchers.filter((w) => w.player !== player);
-  const me_ = !session?.seat && session && !host;
-  watchersEl.hidden = !others.length && !me_;
+  renderSpectating();
+  renderToasts();
+  watchersEl.hidden = !others.length;
   watchersEl.innerHTML =
-    (me_ ? `<div class="ct-watch-note">You're watching. The host can give you a seat.</div>` : "") +
     (others.length ? `<span class="ct-watch-label">Watching</span>` + others.map((w) =>
       `<button class="ct-chip" data-player="${w.player}" style="--seat:${w.color ?? "#9aa69e"}" ${host ? `title="What to do with ${esc(w.name)}"` : "disabled"}>${esc(w.name)}</button>`).join("") : "");
 }
@@ -731,6 +735,55 @@ tableEl.addEventListener("click", (e) => {
   const plate = e.target.closest?.(".ct-plate");
   const seat = plate && state.seats.find((x) => x.id === plate.dataset.seat);
   if (seat?.player && seat.player !== player) openPersonMenu(seat.player, plate);
+});
+
+// A spectator gets a banner across the top saying so, with a way to ask the host for a seat.
+let hostPlayer = null, asked = false;
+const spectateEl = document.createElement("div");
+spectateEl.className = "ct-spectate";
+spectateEl.hidden = true;
+document.body.appendChild(spectateEl);
+spectateEl.addEventListener("click", (e) => {
+  if (!e.target.closest("[data-ask]") || asked) return;
+  asked = true; session?.ask?.(); renderSpectating();
+});
+function renderSpectating() {
+  const watching = !!session && !session.isHost && session.connected && !session.seat;
+  if (!watching) asked = false;
+  spectateEl.hidden = !watching;
+  document.body.classList.toggle("ct-is-watching", watching);
+  if (!watching) return;
+  const name = state?.seats.find((s) => s.player === hostPlayer)?.name, host = name ? esc(name) : null;
+  spectateEl.innerHTML = `<div class="ct-spectate-eye">${eyeSVG(true)}</div>
+    <div class="ct-spectate-text"><b>You're watching ${host ? `${host}'s` : "this"} table</b><span>Only players can move cards. ${host ?? "The host"} can give you a seat.</span></div>
+    <button class="ct-toast-go" data-ask ${asked ? "disabled" : ""}>${asked ? "Asked" : "Ask for a seat"}</button>`;
+}
+
+// The host gets a note for each person who arrives or asks to play, stacked at the top, until
+// they seat them or wave it off. A note goes away by itself once that person sits or leaves.
+const toasts = new Map(); // player → "joined" | "asked"
+const toastsEl = document.createElement("div");
+toastsEl.className = "ct-toasts";
+document.body.appendChild(toastsEl);
+function toast(who, kind) { toasts.set(who, kind); renderToasts(); }
+function renderToasts() {
+  for (const who of toasts.keys()) if (!watchers.some((w) => w.player === who)) toasts.delete(who);
+  document.body.classList.toggle("ct-has-toasts", toasts.size > 0);
+  const full = session?.isHost && !session.canSeat();
+  toastsEl.innerHTML = [...toasts].map(([who, kind]) => {
+    const w = watchers.find((x) => x.player === who);
+    return `<div class="ct-toast" data-player="${who}" style="--seat:${w.color ?? "#9aa69e"}">
+      <span class="ct-toast-dot"></span>
+      <div class="ct-spectate-text"><b>${esc(w.name)} ${kind === "asked" ? "wants a seat" : "joined"}</b><span>${full ? "All six seats are taken." : kind === "asked" ? "They asked to play." : "They're watching for now."}</span></div>
+      <button class="ct-toast-go" data-seat ${full ? "disabled" : ""}>Give a seat</button>
+      <button class="ct-toast-later" data-later>Later</button></div>`;
+  }).join("");
+}
+toastsEl.addEventListener("click", (e) => {
+  const t = e.target.closest(".ct-toast"), who = t?.dataset.player;
+  if (!who) return;
+  if (e.target.closest("[data-seat]")) session.seatPlayer(who);
+  if (e.target.closest("[data-seat], [data-later]")) { toasts.delete(who); renderToasts(); }
 });
 
 function openPersonMenu(who, anchor) {

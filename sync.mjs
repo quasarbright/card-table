@@ -23,7 +23,7 @@ const SEATING = new Set(["sit", "stand", "setSeats", "setPlayer", "setHandLocked
 // People who join start out watching. The host can give them a seat, ask a seated player to
 // watch instead, or send someone away for good (while this table is open).
 //
-// me: { player, name, color }; hooks: { onChange(state, fx), onRoster({ online, watchers }), save(state) }
+// me: { player, name, color }; hooks: { onChange(state, fx), onRoster({ host, online, watchers }), onAsk(player), save(state) }
 export function hostSession(net, state, me, hooks) {
   const past = [];                 // [{ state, by }] before each change, newest last
   const peers = new Map();         // peer id → player id
@@ -57,7 +57,7 @@ export function hostSession(net, state, me, hooks) {
   // who's connected, and who of them is watching rather than sitting
   function roster() {
     const list = online();
-    const r = { online: list, watchers: list.filter((p) => !seatOf(p)).map((p) => ({ player: p, ...people.get(p) })) };
+    const r = { host: me.player, online: list, watchers: list.filter((p) => !seatOf(p)).map((p) => ({ player: p, ...people.get(p) })) };
     net.send("roster", r); hooks.onRoster(r);
   }
   // a seat for someone: an empty one, or a new one if there's room
@@ -111,6 +111,8 @@ export function hostSession(net, state, me, hooks) {
     else net.send("reject", { id }, peer);
   });
   net.on("undo", (_, peer) => { if (seatOf(peers.get(peer))) undo(); });
+  // a spectator asking to play
+  net.on("ask", (_, peer) => { const p = peers.get(peer); if (p && !seatOf(p)) hooks.onAsk?.(p); });
   net.onLeave((peer) => { if (peers.delete(peer)) roster(); });
 
   return {
@@ -189,6 +191,7 @@ export function clientSession(net, me, hooks) {
       net.send("act", { id, action, fx }, host);
     },
     undo() { if (this.canUndo()) net.send("undo", {}, host); },
+    ask() { if (host) net.send("ask", {}, host); },
     canUndo() { return !!mySeat() && depth > 0 && !pending.length; },
   };
 }

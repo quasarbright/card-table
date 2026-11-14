@@ -38,6 +38,7 @@ const at = (page, x, y) => page.evaluate(([x, y]) => window.cardTable.view.toScr
 
 // the host gives a watcher a seat, from their name at the top
 async function seat(A, B, name) {
+  await A.locator(".ct-toast", { hasText: name }).getByRole("button", { name: "Later" }).click();
   await A.locator(".ct-chip", { hasText: name }).click();
   await A.getByRole("button", { name: "Give a seat" }).click();
   await B.waitForFunction(() => !!window.cardTable?.session?.seat);
@@ -56,11 +57,11 @@ test("joining from the link you watch first; the host gives you the next seat", 
   await join(B, A.url(), "Ana");
   // watching: no seat, a note saying so, and Ana's name on the host's screen
   expect(await B.evaluate(() => window.cardTable.session.seat)).toBeNull();
-  await expect(B.locator(".ct-watch-note")).toBeVisible();
+  await expect(B.locator(".ct-spectate")).toContainText("You're watching Mike's table");
   await expect(A.locator(".ct-chip", { hasText: "Ana" })).toBeVisible();
   expect((await state(A)).seats).toHaveLength(1);
   await seat(A, B, "Ana");
-  await expect(B.locator(".ct-watch-note")).toHaveCount(0);
+  await expect(B.locator(".ct-spectate")).toBeHidden();
   await expect(A.locator(".ct-chip")).toHaveCount(0);
   expect(await B.evaluate(() => window.cardTable.session.seat)).toBe("s1");
   await expect(A.locator(".ct-plate", { hasText: "Ana" })).toBeVisible();
@@ -71,6 +72,36 @@ test("joining from the link you watch first; the host gives you the next seat", 
   await expect(A.locator("#players")).toHaveCount(0);
   await expect(A.locator("#viewer")).toBeHidden();
   expect(JSON.stringify(await state(A))).toBe(JSON.stringify(await state(B)));
+  expect([...A.errors, ...B.errors]).toEqual([]);
+});
+
+test("the host gets a note for each arrival, stacked; seat from it, wave it off, or answer an ask", async ({ context }) => {
+  const A = await tab(context), B = await tab(context), C = await tab(context);
+  await host(A, "Mike");
+  await join(B, A.url(), "Ana");
+  await join(C, A.url(), "Bo");
+  // two notes, one under the other
+  const notes = A.locator(".ct-toast");
+  await expect(notes).toHaveCount(2);
+  await expect(notes.nth(0)).toContainText("Ana joined");
+  await expect(notes.nth(1)).toContainText("Bo joined");
+  const [a, b] = [await notes.nth(0).boundingBox(), await notes.nth(1).boundingBox()];
+  expect(b.y).toBeGreaterThanOrEqual(a.y + a.height);
+  // Give a seat seats Ana and clears her note; her banner goes away
+  await notes.nth(0).getByRole("button", { name: "Give a seat" }).click();
+  await B.waitForFunction(() => !!window.cardTable.session.seat);
+  await expect(B.locator(".ct-spectate")).toBeHidden();
+  await expect(notes).toHaveCount(1);
+  // Later waves Bo's off; asking brings it back as a request
+  await notes.nth(0).getByRole("button", { name: "Later" }).click();
+  await expect(notes).toHaveCount(0);
+  await C.locator(".ct-spectate").getByRole("button", { name: "Ask for a seat" }).click();
+  await expect(C.locator(".ct-spectate").getByRole("button", { name: "Asked" })).toBeDisabled();
+  await expect(notes).toHaveCount(1);
+  await expect(notes.nth(0)).toContainText("Bo wants a seat");
+  // a note goes once its person leaves
+  await C.close();
+  await expect(notes).toHaveCount(0, { timeout: 8000 });
   expect([...A.errors, ...B.errors]).toEqual([]);
 });
 
@@ -249,6 +280,8 @@ test("the pencil by your name changes your name and color for everyone", async (
 
 test("while you look through a stack, the others see your ring on it but not the cards", async ({ context }) => {
   const { A, B } = await twoAtATable(context);
+  // once seated, the view turns to the new seat; click the count after it has
+  await settle(B);
   const g = await center(B, ".ct-grip");
   await B.mouse.click(g.x, g.y);
   await B.getByRole("button", { name: "Peek stack" }).click();

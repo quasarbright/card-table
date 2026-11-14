@@ -293,7 +293,6 @@
     }
     .ct-watchers[hidden] { display: none; }
     .ct-watch-label { color: var(--muted); margin-right: 2px; }
-    .ct-watch-note { flex-basis: 100%; text-align: right; color: var(--text); margin-bottom: 2px; }
     .ct-chip {
       font: inherit; color: var(--text); background: rgba(20,12,7,.55); cursor: pointer;
       border: 1px solid color-mix(in srgb, var(--seat) 55%, transparent); border-radius: 999px; padding: 3px 10px 3px 8px;
@@ -301,6 +300,42 @@
     .ct-chip::before { content: ""; display: inline-block; width: .55em; height: .55em; border-radius: 50%; background: var(--seat); margin-right: .45em; }
     .ct-chip:disabled { cursor: default; opacity: 1; }
     .ct-chip:not(:disabled):hover { border-color: var(--seat); }
+    /* a spectator's banner, and the host's notes about people arriving, on the cards' ivory stock */
+    .ct-spectate, .ct-toast {
+      display: flex; align-items: center; gap: 14px; padding: 12px 14px;
+      background: var(--ivory); color: #1d1c22; border-radius: 12px; font-family: var(--font-ui);
+      box-shadow: 0 10px 30px rgba(0,0,0,.45), 0 0 0 1px rgba(0,0,0,.2);
+    }
+    .ct-spectate { position: fixed; z-index: 7; top: 14px; left: 50%; transform: translateX(-50%); width: max-content; max-width: calc(100vw - 32px); box-sizing: border-box; }
+    .ct-spectate[hidden] { display: none; }
+    .ct-toasts { position: fixed; z-index: 7; top: 14px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; gap: 8px; align-items: center; max-width: calc(100vw - 32px); }
+    .ct-toast { animation: ct-toast-in .25s ease-out; }
+    @keyframes ct-toast-in { from { opacity: 0; transform: translateY(-8px); } }
+    @media (prefers-reduced-motion: reduce) { .ct-toast { animation: none; } }
+    .ct-spectate-eye { width: 34px; height: 34px; border-radius: 50%; background: #1d1c22; color: var(--ivory); padding: 7px; box-sizing: border-box; flex: none; }
+    .ct-toast-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--seat); flex: none; box-shadow: 0 0 0 1.5px rgba(0,0,0,.25); }
+    .ct-spectate-text { display: flex; flex-direction: column; min-width: 0; }
+    .ct-spectate-text b { font-size: 16px; font-weight: 600; }
+    .ct-spectate-text span { font-size: 13.5px; color: #4b4740; }
+    .ct-toast-go, .ct-toast-later { font: 600 14px var(--font-ui); border: 0; border-radius: 8px; padding: 8px 14px; cursor: pointer; flex: none; }
+    .ct-toast-go { background: #a8322f; color: var(--ivory); }
+    .ct-toast-go:hover:not(:disabled) { background: #bd3a36; }
+    .ct-toast-go:disabled { background: #d9d2c2; color: #6b665c; cursor: default; }
+    .ct-toast-later { background: transparent; color: #1d1c22; }
+    .ct-toast-later:hover { background: rgba(0,0,0,.07); }
+    .ct-toast button:focus-visible, .ct-spectate button:focus-visible { outline: 2px solid #1d1c22; outline-offset: 2px; }
+    body.ct-is-watching #hint { visibility: hidden; }
+    @media (max-width: 600px) { body.ct-has-toasts #hint { visibility: hidden; } }
+    @media (max-width: 600px) {
+      .ct-spectate, .ct-toast { gap: 10px; padding: 10px 12px; flex-wrap: wrap; }
+      .ct-spectate, .ct-toasts { top: 58px; width: calc(100vw - 24px); }
+      .ct-toast { width: 100%; box-sizing: border-box; }
+      .ct-spectate-text { flex: 1 1 calc(100% - 60px); }
+      .ct-spectate-text b { font-size: 15px; }
+      .ct-spectate button, .ct-toast button { padding: 6px 12px; }
+      .ct-spectate [data-ask], .ct-toast [data-seat] { margin-left: 44px; }
+      .ct-toast [data-seat] { margin-left: 20px; }
+    }
     .ct-plate[data-seat] { cursor: default; }
     .ct-person-name { font: 1.05rem var(--font-display); padding: 6px 12px 4px; }
     .ct-menu .ct-item:disabled { opacity: .45; cursor: default; }
