@@ -34,7 +34,9 @@ export function hostSession(net, state, me, hooks) {
   function commit(action, by, fx = null, id = null, from = null) {
     let next;
     try {
-      if (by && touchesLockedHand(state, action, by)) throw new Error("locked hand");
+      // the host may lock or unlock anyone's hand
+      const hostLocking = action.type === "setHandLocked" && by === seatOf(me.player);
+      if (by && !hostLocking && touchesLockedHand(state, action, by)) throw new Error("locked hand");
       next = apply(state, action);
     } catch {
       if (from) net.send("reject", { id }, from);

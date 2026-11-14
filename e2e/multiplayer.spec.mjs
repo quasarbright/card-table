@@ -210,6 +210,15 @@ test("a hand is locked until its player opens it: until then nobody else can tak
   await expect(A.locator(".ct-lock-mine")).not.toHaveClass(/ct-locked/);
   await A.locator(".ct-lock-mine").click();
   await expect(B.locator('.ct-lock[data-seat="s0"]')).toHaveClass(/ct-locked/);
+  // the host can open or close anyone's hand; a player only their own
+  await expect(B.locator('.ct-lock[data-seat="s0"]')).not.toHaveClass(/ct-lock-click/);
+  await B.evaluate(() => window.cardTable.dispatch({ type: "setHandLocked", seat: "s0", locked: false }));
+  await settle(A);
+  expect(await A.evaluate(() => !!window.cardTable.state.openHands?.s0)).toBe(false);
+  await A.locator('.ct-lock[data-seat="s1"]').click();
+  await expect(B.locator('.ct-lock[data-seat="s1"]')).not.toHaveClass(/ct-locked/);
+  await A.locator('.ct-lock[data-seat="s1"]').click();
+  await expect(B.locator('.ct-lock[data-seat="s1"]')).toHaveClass(/ct-locked/);
   expect([...A.errors, ...B.errors]).toEqual([]);
 });
 

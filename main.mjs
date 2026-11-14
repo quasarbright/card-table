@@ -158,7 +158,7 @@ function startHost(id, name, color) {
   net.on("peek", onRemotePeek);
   net.start();
   hostSave(id)(st);
-  state = st; me = session.seat; view.viewer = me;
+  state = st; me = session.seat; view.viewer = me; view.lockAll = true;
   closeGate();
   relayout(); refreshBar();
 }
@@ -382,9 +382,10 @@ tableEl.addEventListener("pointerdown", (e) => {
     }, HOLD_MS);
   }
 });
-// your hand's lock: click it to let others take from your hand, or to stop them
+// your hand's lock: click it to let others take from your hand, or to stop them (the host can
+// do this for anyone's hand)
 tableEl.addEventListener("click", (e) => {
-  const lock = e.target.closest?.(".ct-lock-mine");
+  const lock = e.target.closest?.(".ct-lock-click");
   if (!lock || !seated()) return;
   dispatch({ type: "setHandLocked", seat: lock.dataset.seat, locked: !handLocked(state, lock.dataset.seat) });
 });

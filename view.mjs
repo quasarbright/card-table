@@ -61,6 +61,7 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
     root, stage,
     get viewer() { return viewer; },
     set viewer(v) { viewer = v; },
+    lockAll: false, // the host can lock or unlock anyone's hand
     // screen ⇄ table coordinates
     toTable(clientX, clientY) {
       const b = root.getBoundingClientRect();
@@ -533,15 +534,18 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
       if (seat.player) {
         const locked = handLocked(st, seat.id);
         const lx = c.x - right.x * reach.along - outward.x * reach.across, ly = c.y - right.y * reach.along - outward.y * reach.across;
-        const lock = el(own ? "button" : "div", "ct-lock", zoneEyeLayer);
+        const can = own || view.lockAll;
+        const lock = el(can ? "button" : "div", "ct-lock", zoneEyeLayer);
         lock.style.setProperty("--seat", seat.color);
         lock.classList.toggle("ct-locked", locked);
         lock.classList.toggle("ct-lock-mine", own);
+        lock.classList.toggle("ct-lock-click", can);
         lock.dataset.seat = seat.id;
         lock.innerHTML = lockSVG(locked);
         const whose = own ? "Your hand" : `${seat.name}'s hand`;
-        lock.dataset.tooltip = locked ? `${whose} is locked: only ${own ? "you" : seat.name} can take from it` : `${whose} is open: anyone can take from it`;
-        if (own) lock.setAttribute("aria-label", locked ? "Unlock your hand" : "Lock your hand");
+        lock.dataset.tooltip = (locked ? `${whose} is locked: only ${own ? "you" : seat.name} can take from it` : `${whose} is open: anyone can take from it`) +
+          (can ? `. Click to ${locked ? "unlock" : "lock"} it` : "");
+        if (can) lock.setAttribute("aria-label", `${locked ? "Unlock" : "Lock"} ${own ? "your hand" : whose}`);
         lock.style.transform = `translate(${lx}px, ${ly}px) rotate(${-frame.rot * DEG}deg) translate(-50%, -50%)`;
       }
       // who can see this hand: an eye on the area's inner corner, to the right as its owner sits
