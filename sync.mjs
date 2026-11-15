@@ -24,7 +24,8 @@ import { describe, isMoney } from "./log.mjs";
 const HISTORY = 300;
 // who sits where isn't part of the game: undo never takes it back, and it's written into
 // every earlier table too, so undoing past someone's arrival keeps them seated
-const SEATING = new Set(["sit", "stand", "setSeats", "setPlayer", "setHandLocked"]);
+// (nor is where a pot sits on the felt)
+const SEATING = new Set(["sit", "stand", "setSeats", "setPlayer", "setHandLocked", "movePot"]);
 
 // People who join start out watching. The host can give them a seat, ask a seated player to
 // watch instead, or send someone away for good (while this table is open).

@@ -143,6 +143,7 @@ function draw(o = {}) {
     ...o,
     hover: drag || pending ? null : hovered?.card,
     drag: drag && drag.active ? drag : null,
+    potDrag: potDrag?.moved ? potDrag : null,
     target: drag?.target,
     remote: others,
     online: new Set(online),
@@ -904,9 +905,37 @@ tableEl.addEventListener("click", (e) => {
   if (seat.player !== player) openPersonMenu(seat.player, plate);
 });
 // the host clicking a pot: award it
+let potJustMoved = false;
 tableEl.addEventListener("click", (e) => {
   const pot = e.target.closest?.(".ct-pot");
+  if (potJustMoved) { potJustMoved = false; return; }
   if (pot) bank.potSheet(pot.dataset.pot);
+});
+// anyone at the table can drag a pot out of the way; it stays where it's put, for everyone
+let potDrag = null;
+tableEl.addEventListener("pointerdown", (e) => {
+  const card = e.target.closest?.(".ct-pot");
+  if (!card || e.button !== 0 || !seated() || drag) return;
+  const at = view.toTable(e.clientX, e.clientY), q = view.potAt(card.dataset.pot);
+  if (!q) return;
+  e.preventDefault();
+  potDrag = { id: card.dataset.pot, sx: e.clientX, sy: e.clientY, offX: q.x - at.x, offY: q.y - at.y, moved: false };
+});
+addEventListener("pointermove", (e) => {
+  if (!potDrag) return;
+  if (!potDrag.moved && Math.hypot(e.clientX - potDrag.sx, e.clientY - potDrag.sy) < 5) return;
+  potDrag.moved = true;
+  const p = view.toTable(e.clientX, e.clientY);
+  potDrag.x = p.x + potDrag.offX; potDrag.y = p.y + potDrag.offY;
+  drawSoon();
+});
+addEventListener("pointerup", () => {
+  const d = potDrag;
+  potDrag = null;
+  if (!d?.moved) return;
+  potJustMoved = true;
+  setTimeout(() => { potJustMoved = false; });
+  dispatch({ type: "movePot", id: d.id, ...clampToFelt(d.x, d.y, 70) });
 });
 
 // A spectator gets a banner across the top saying so, with a way to ask the host for a seat.

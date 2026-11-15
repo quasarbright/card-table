@@ -207,3 +207,32 @@ test("the bar's Chips button shows and hides your dock; only the host's dock has
   await chips.click();
   await expect(B.locator(".ct-dock")).toBeVisible();
 });
+
+test("a pot drags out of the way and stays there for everyone; a click still opens it", async ({ context }) => {
+  const A = await tab(context), B = await tab(context);
+  await host(A);
+  await join(B, A.url(), "Ana");
+  await seat(A, B, "Ana");
+  await startChips(A);
+  // Ana drags it
+  const box = await B.locator(".ct-pot").boundingBox();
+  const from = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+  await B.mouse.move(from.x, from.y); await B.mouse.down();
+  await B.mouse.move(from.x - 60, from.y - 40, { steps: 6 });
+  await B.mouse.move(from.x - 200, from.y - 80, { steps: 10 });
+  await B.mouse.up();
+  await settle(B);
+  const pot = (await state(A)).bank.pots[0];
+  expect(typeof pot.x).toBe("number");
+  await expect(B.locator(".ct-bank-sheet")).toHaveCount(0); // a drag isn't a click
+  // where it lands on Ana's screen is where she let go
+  const after = await B.locator(".ct-pot").boundingBox();
+  expect(Math.abs(after.x + after.width / 2 - (from.x - 200))).toBeLessThan(6);
+  // not a line in the history
+  await A.locator("#history").click();
+  await expect(A.locator(".ct-h-list")).not.toContainText("moved");
+  await A.keyboard.press("Escape");
+  // the host can still click it open
+  await A.locator(".ct-pot").click();
+  await expect(A.locator(".ct-bank-sheet")).toBeVisible();
+});

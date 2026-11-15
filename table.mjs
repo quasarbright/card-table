@@ -190,6 +190,7 @@ export function tiltedToward(state, cardId) {
 // { type: "giveAll", amount }                 every seated player gets `amount` more (a rebuy)
 // { type: "setStart", amount }                what new players start with
 // { type: "addPot", id, name }, { type: "renamePot", id, name }, { type: "removePot", id }
+// { type: "movePot", id, x, y }               where a pot sits (anyone may move one)
 // (all but transfer are the host's)
 
 export function apply(state, action) {
@@ -423,6 +424,12 @@ const ACTIONS = {
     for (const seat of s.seats) if (seat.player) s.bank.chips[seat.player] = (s.bank.chips[seat.player] ?? 0) + amount;
   },
   setStart(s, { amount }) { if (!s.bank || !count(amount)) throw new Error("bad start"); s.bank.start = amount; },
+  // where a pot sits on the felt (until it's moved, each screen puts it beside the deck)
+  movePot(s, { id, x, y }) {
+    const p = potOf(s, id);
+    if (!p || !Number.isFinite(x) || !Number.isFinite(y)) throw new Error("bad pot");
+    p.x = x; p.y = y;
+  },
   addPot(s, { id, name }) {
     if (!s.bank || potOf(s, id)) throw new Error("bad pot");
     s.bank.pots.push({ id, name: potName(name) || defaultPotName(s), chips: 0, from: {} });

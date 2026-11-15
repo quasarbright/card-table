@@ -525,7 +525,8 @@
       transition: transform .5s cubic-bezier(.3,.7,.2,1);
     }
     .ct-still .ct-pot { transition: none; }
-    body.ct-is-host .ct-pot { cursor: pointer; }
+    .ct-pot { cursor: grab; }
+    .ct-pot.ct-pot-moving { cursor: grabbing; transition: none; box-shadow: inset 0 1px 0 #ffffff14, 0 18px 34px #0008; }
     body.ct-is-host .ct-pot:hover { border-color: var(--accent); }
     .ct-pot-name { display: block; font-weight: 700; color: var(--muted); font-size: calc(13px / var(--s, 1)); }
     .ct-pot-amt { display: inline-block; font-weight: 800; font-size: calc(30px / var(--s, 1)); line-height: 1.1; color: var(--accent); }

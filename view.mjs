@@ -88,6 +88,7 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
     },
     layout, render, cardEl: (id) => cardEls.get(id), placement, handSlot,
     potHint: null, // the word in a pot card's corner ("award ›" for the host)
+    potAt: (id) => potSpots.get(id) ?? null,
     seatIndex(seatId) { return state.seats.findIndex((s) => s.id === seatId); },
   };
 
@@ -444,14 +445,16 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
     for (const [id, e] of cardEls) if (!live.has(id)) { e.remove(); cardEls.delete(id); shown.delete(id); springs.delete(id); }
     followers = [];
     if (interactive) { renderGrips(st, o); renderZones(st, place, o); renderTags(st, place, o); renderEyes(st, place, o); }
-    renderPots(st);
+    renderPots(st, o);
     wake();
   }
 
   // Chips' pots, as chips draws them, on the felt to the right of the middle, one above the
   // other, level on screen. The host clicks one to award it.
-  function renderPots(st) {
+  const potSpots = new Map(); // pot id → where it's drawn
+  function renderPots(st, o = {}) {
     const K = keyed(potLayer), pots = st.bank?.pots ?? [];
+    potSpots.clear();
     const down = view.screenDir(0, 1), right = view.screenDir(1, 0);
     pots.forEach((p, i) => {
       const card = K.get(p.id, "button", "ct-pot");
@@ -461,8 +464,13 @@ export function createView(root, { viewer = "s0", interactive = true } = {}) {
       setText(card.children[0], view.potHint?.(p) ?? "");
       setText(card.children[1], p.name);
       bump(card.children[2], p.chips);
+      // where it was put, or (never moved) beside the deck on this screen; being dragged, under the pointer
       const off = (i - (pots.length - 1) / 2) * 96;
-      const x = CX + right.x * 230 + down.x * off, y = CY + right.y * 230 + down.y * off;
+      let x = p.x ?? CX + right.x * 230 + down.x * off, y = p.y ?? CY + right.y * 230 + down.y * off;
+      const dragging = o.potDrag?.id === p.id;
+      if (dragging) ({ x, y } = o.potDrag);
+      card.classList.toggle("ct-pot-moving", dragging);
+      potSpots.set(p.id, { x, y });
       card.style.transform = `translate(${x}px, ${y}px) rotate(${-frame.rot * DEG}deg) translate(-50%, -50%)`;
     });
     K.done();
