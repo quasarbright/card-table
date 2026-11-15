@@ -4,7 +4,7 @@ let pop = null;
 
 export function closeShare() { pop?.remove(); pop = null; }
 
-export function openShare(anchor) {
+export function openShare(anchor, code = "") {
   if (pop) { closeShare(); return; }
   const url = location.href;
   pop = document.createElement("div");
@@ -14,7 +14,8 @@ export function openShare(anchor) {
   pop.innerHTML = `
     <div class="ct-pop">
       <div class="ct-share-title">Invite people</div>
-      <div class="ct-pop-title">Anyone with this link sits down at your table.</div>
+      <div class="ct-pop-title">Anyone with this link, or this code on the Card Table home screen, comes to your table.</div>
+      ${code ? `<div class="ct-share-code">${code}</div>` : ""}
       <div class="ct-share-row">
         <input class="ct-share-url" readonly value="${url.replace(/"/g, "&quot;")}" aria-label="Table link" />
         <button class="ct-act ct-act-ink" data-copy>Copy link</button>
@@ -34,7 +35,8 @@ export function openShare(anchor) {
   // above the button that opened it, kept on screen
   const a = anchor.getBoundingClientRect(), r = pop.getBoundingClientRect();
   pop.style.left = `${Math.max(8, Math.min(a.left + a.width / 2 - r.width / 2, innerWidth - r.width - 8))}px`;
-  pop.style.top = `${Math.max(8, a.top - r.height - 10)}px`;
+  // (below it when there's no room above: the code tag at the top of the screen)
+  pop.style.top = `${a.top - r.height - 10 >= 8 ? a.top - r.height - 10 : Math.min(a.bottom + 10, innerHeight - r.height - 8)}px`;
   setTimeout(() => {
     addEventListener("pointerdown", function away(e) {
       if (!pop || pop.contains(e.target) || anchor.contains(e.target)) { if (!pop) removeEventListener("pointerdown", away); return; }

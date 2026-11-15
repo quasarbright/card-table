@@ -17,9 +17,8 @@ async function open(page) {
 // host a table through the opening screen (tabs talk over a BroadcastChannel: ?net=local)
 async function host(page, name = "Mike") {
   await page.goto("/index.html?net=local");
-  await page.getByRole("button", { name: "Host a table" }).click();
   await page.fill("#ct-name", name);
-  await page.getByRole("button", { name: "Host table" }).click();
+  await page.getByRole("button", { name: "Open a table" }).click();
   await page.waitForFunction(() => !!window.cardTable?.session);
 }
 const settle = (page) => page.waitForTimeout(650);

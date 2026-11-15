@@ -7,7 +7,7 @@ import { suitDefs } from "./faces.mjs";
 import { startAboutDiagram } from "./about.mjs";
 import { connect } from "./net.mjs";
 import { hostSession, clientSession } from "./sync.mjs";
-import { openGate, closeGate, swatches, wireSwatches } from "./gate.mjs";
+import { openGate, closeGate, swatches, wireSwatches, openSettings } from "./gate.mjs";
 import { openShare, closeShare } from "./share.mjs";
 
 document.body.insertAdjacentHTML("afterbegin", suitDefs());
@@ -33,9 +33,50 @@ if (params.has("fps")) {
   };
   requestAnimationFrame(count);
 }
+// Settings for this browser (not per tab, not per table).
+const SETTINGS_KEY = "card-table:settings";
+function settings() { try { return JSON.parse(localStorage.getItem(SETTINGS_KEY)) || {}; } catch { return {}; } }
+function saveSettings(x) { try { localStorage.setItem(SETTINGS_KEY, JSON.stringify({ ...settings(), ...x })); } catch {} }
+
+// Who this tab is. Normally every tab in a browser is the same person. With "each tab is a
+// different player" on (for trying a table alone on one computer), each open tab claims a
+// numbered slot, a Web Lock held while the tab lives: slot 0 is the plain namespace, every extra
+// tab gets its own. ?net=local (the browser tests) keeps each tab's identity in its own
+// sessionStorage instead. The same scheme as my chips sketch.
+let NS = "card-table:", tabSlot = 0;
+const heldSlots = new Set();
+async function claimSlot() {
+  if (NET === "local" || !settings().tabsArePlayers || !navigator.locks) return;
+  let want = null;
+  try { want = sessionStorage.getItem("card-table:slot") || null; } catch {}
+  const grab = (n) => new Promise((res) => {
+    navigator.locks.request("card-table-slot-" + n, { ifAvailable: true }, (lock) => {
+      if (lock) heldSlots.add(n);
+      res(!!lock);
+      return lock ? new Promise(() => {}) : undefined; // held until the tab goes away
+    }).catch(() => res(false));
+  });
+  let slot = +want || 0;
+  // after a reload the old page may still hold this tab's slot for a moment: wait for it
+  const tries = want == null ? 1 : 8;
+  for (let i = 0; i < tries && !(await grab(slot)); i++) if (i < tries - 1) await new Promise((r) => setTimeout(r, 150));
+  if (!heldSlots.has(slot)) for (slot = 0; slot < 50 && !(await grab(slot)); slot++);
+  try { sessionStorage.setItem("card-table:slot", slot); } catch {}
+  tabSlot = slot;
+  if (slot) NS = `card-table:tab${slot}:`;
+}
+await claimSlot();
 const store = NET === "local" ? sessionStorage : localStorage;
-const read = (k) => { try { return store.getItem(`card-table:${k}`); } catch { return null; } };
-const write = (k, v) => { try { store.setItem(`card-table:${k}`, v); } catch {} };
+const read = (k) => { try { return store.getItem(NS + k); } catch { return null; } };
+const write = (k, v) => { try { store.setItem(NS + k, v); } catch {} };
+const forgetKey = (k) => { try { store.removeItem(NS + k); } catch {} };
+function showSettings() {
+  openSettings({
+    tabsArePlayers: !!settings().tabsArePlayers && NET !== "local", slot: tabSlot,
+    // who this tab is gets decided when the page loads
+    onToggle(on) { saveSettings({ tabsArePlayers: on }); try { sessionStorage.setItem("card-table:slot", ""); } catch {} setTimeout(() => location.reload(), 250); },
+  });
+}
 
 // this browser's player id, kept so a reload sits you back in your seat
 let player = read("player");
@@ -151,11 +192,24 @@ function sendDrag() {
 // ---- hosting and joining ---------------------------------------------------------------------
 
 let netRef = null;
-const newTableId = () => Math.random().toString(36).slice(2, 10);
+// a table's code: 5 letters and digits that can't be misread for each other (no I, L, O, 0, 1)
+const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+const newTableId = () => Array.from({ length: 5 }, () => CODE_ALPHABET[Math.floor(Math.random() * CODE_ALPHABET.length)]).join("");
+let tableCode = "";
+// the tables you've hosted or sat at, newest first, for the home screen
+function remember(entry) {
+  let list = [];
+  try { list = JSON.parse(read("recent")) || []; } catch {}
+  list = list.filter((r) => r.code !== entry.code);
+  list.unshift({ ...entry, ts: Date.now() });
+  write("recent", JSON.stringify(list.slice(0, 8)));
+}
+function recentTables() { try { return JSON.parse(read("recent")) || []; } catch { return []; } }
+function forgetTable(code) { write("recent", JSON.stringify(recentTables().filter((r) => r.code !== code))); }
+// the table's link: this page with its code after the #
 function tableUrl(id) {
   const u = new URL(location.href);
-  u.search = ""; u.hash = "";
-  u.searchParams.set("t", id);
+  u.search = ""; u.hash = id ? `#${id}` : "";
   if (NET === "local") u.searchParams.set("net", "local");
   return u.toString();
 }
@@ -165,6 +219,7 @@ function hostSaved(id) { try { return JSON.parse(read(`host:${id}`)); } catch { 
 
 function startHost(id, name, color) {
   history.replaceState(null, "", tableUrl(id));
+  setCode(id);
   let st = hostSaved(id);
   // a table saved before the table was wide: bring its stacks onto the felt
   if (st) for (const pile of Object.values(st.piles)) Object.assign(pile, clampToFelt(pile.x, pile.y));
@@ -181,8 +236,9 @@ function startHost(id, name, color) {
   });
   net.on("drag", onRemoteDrag);
   net.on("peek", onRemotePeek);
-  net.start().catch(() => openGate({ step: "offline", retry: () => location.reload() }));
+  net.start().catch(() => openGate({ step: "offline", code: id, retry: () => location.reload(), home: goHome }));
   hostSave(id)(st);
+  remember({ code: id, host: true, color: st.seats.find((x) => x.player === player)?.color, title: "your table" });
   state = st; me = session.seat; view.viewer = me; view.lockAll = true;
   closeGate();
   relayout(); refreshBar();
@@ -191,36 +247,56 @@ function startHost(id, name, color) {
 function startJoin(id, name, color) {
   const net = connect(id, NET);
   netRef = net;
-  openGate({ step: "connecting" });
+  setCode(id);
+  openGate({ step: "connecting", code: id });
   const giveUp = setTimeout(() => {
-    if (!session?.connected) openGate({ step: "unreachable", retry: () => location.reload() });
+    if (!session?.connected) openGate({ step: "unreachable", code: id, retry: () => location.reload(), home: goHome });
   }, 25000);
   session = clientSession(net, { player, name, color }, {
     onChange,
     onWelcome() {
       clearTimeout(giveUp);
       write(`joined:${id}`, "1");
+      const hostSeat = state.seats.find((x) => x.player && x.player === hostPlayer);
+      remember({ code: id, host: false, color: state.seats.find((x) => x.player === player)?.color ?? color, title: hostSeat ? `${hostSeat.name}'s table` : "a friend's table" });
       me = session.seat ?? WATCH; view.viewer = me;
       closeGate();
       relayout();
     },
     onRoster,
-    onLost() { remote.clear(); openGate({ step: "lost", host: hostOwn }); },
-    onKicked() { remote.clear(); openGate({ step: "kicked", host: hostOwn }); },
+    onLost() { remote.clear(); openGate({ step: "lost", code: id, home: goHome }); },
+    onKicked() { remote.clear(); forgetKey(`joined:${id}`); forgetTable(id); openGate({ step: "kicked", code: id, home: goHome }); },
   });
   net.on("drag", onRemoteDrag);
   net.on("peek", onRemotePeek);
-  net.start().catch(() => openGate({ step: "offline", retry: () => location.reload() }));
+  net.start().catch(() => openGate({ step: "offline", code: id, retry: () => location.reload(), home: goHome }));
 }
 function onRoster(r) {
   // the host hears about each person who arrives to watch
   const arrived = r.watchers.filter((w) => w.player !== player && !online.includes(w.player));
   online = r.online; watchers = r.watchers; hostPlayer = r.host ?? hostPlayer;
+  // a table you sat at is listed on your home screen by its host's name
+  const hostSeat = state.seats.find((x) => x.player && x.player === hostPlayer);
+  if (!session?.isHost && tableCode && hostSeat && read(`joined:${tableCode}`))
+    remember({ code: tableCode, host: false, color: state.seats.find((x) => x.player === player)?.color, title: `${hostSeat.name}'s table` });
   if (session?.isHost) for (const w of arrived) toasts.set(w.player, "joined");
   onChange(state, null, null);
   renderWatchers();
 }
-const hostOwn = () => { location.href = tableUrl("").replace(/[?&]t=[^&]*/, "").replace(/\?$/, ""); };
+// back to the home screen (your tables); leaving a table you host closes it for the others
+// until you open it again
+function goHome() { location.href = tableUrl(""); }
+// the code in the corner, which opens the invite
+function setCode(id) {
+  tableCode = id;
+  const tag = document.getElementById("codeTag");
+  tag.textContent = id; tag.hidden = false;
+}
+document.getElementById("codeTag").addEventListener("click", (e) => openShare(e.currentTarget, tableCode));
+document.getElementById("home").addEventListener("click", (e) => { e.preventDefault(); goHome(); });
+document.getElementById("settings").addEventListener("click", showSettings);
+// a new code in the address bar (a link to another table): start over there
+addEventListener("hashchange", () => location.reload());
 
 // ---- the bottom bar ------------------------------------------------------------------------
 
@@ -253,7 +329,7 @@ function setViewer(id) {
 document.getElementById("gather").addEventListener("click", () => {
   dispatch({ type: "gather", id: newId(), x: 500, y: 500, rot: view.uprightRot() });
 });
-document.getElementById("share").addEventListener("click", (e) => openShare(e.currentTarget));
+document.getElementById("share").addEventListener("click", (e) => openShare(e.currentTarget, tableCode));
 // the host's new chips: the counter opens over the button
 document.getElementById("chips").addEventListener("click", (e) => {
   const r = e.currentTarget.getBoundingClientRect();
@@ -1047,9 +1123,9 @@ function openEditor(anchor) {
   editor.className = "ct-menu ct-editor";
   editor.innerHTML = `
     <form class="ct-pop">
-      <label class="ct-pop-title" for="ct-edit-name">Your name</label>
+      <label class="ct-field-label" for="ct-edit-name">Your name</label>
       <input id="ct-edit-name" class="ct-share-url" maxlength="20" spellcheck="false" />
-      <div class="ct-pop-title">Your color</div>
+      <div class="ct-field-label">Your color</div>
       ${swatches(seat.color, taken)}
       <div class="ct-pop-actions"><button class="ct-act ct-act-ink" type="submit">Save</button></div>
     </form>`;
@@ -1164,16 +1240,21 @@ relayout();
 refreshBar();
 startAboutDiagram();
 
-// Where to begin: a table link (?t=…) joins that table, or resumes it if you're its host or have
-// been at it before; otherwise the opening screen offers to host one.
+// Where to begin: a table's code after the # (or an old ?t= link) opens that table, as its host
+// if you are, or straight back into it if you've sat at it before; without one, the home screen.
 {
-  const id = params.get("t");
+  let id = location.hash.slice(1).replace(/[^A-Za-z0-9]/g, "");
+  if (!id && params.get("t")) { id = params.get("t"); history.replaceState(null, "", tableUrl(id)); }
   const name = read("name") ?? "", color = read("color") ?? undefined;
-  const remember = (n, c) => { write("name", n); write("color", c); };
+  const keep = (n, c) => { write("name", n); write("color", c); };
   if (id && hostSaved(id) && name) startHost(id, name, color);
   else if (id && read(`joined:${id}`) && name) startJoin(id, name, color);
-  else if (id) openGate({ step: "name", joining: true, name, color, done: (n, c) => { remember(n, c); startJoin(id, n, c); } });
-  else openGate({ step: "start", name, color, done: (n, c) => { remember(n, c); startHost(newTableId(), n, c); } });
+  else if (id) openGate({ step: "name", code: id, name, color, home: goHome, settings: showSettings, done: (n, c) => { keep(n, c); startJoin(id, n, c); } });
+  else openGate({
+    step: "home", name, color, recent: recentTables(), settings: showSettings,
+    open: (n, c) => { keep(n, c); startHost(newTableId(), n, c); },
+    join: (code) => { location.href = tableUrl(code); },
+  });
 }
 
 // test hook (e2e/*.spec.mjs)
@@ -1187,4 +1268,5 @@ window.cardTable = {
   },
   cardSize: [CARD_W, CARD_H],
   get drag() { return drag; },
+  get tab() { return tabSlot; }, get player() { return player; },
 };

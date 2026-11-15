@@ -15,14 +15,13 @@ async function tab(context) {
 }
 async function host(page, name) {
   await page.goto("/index.html?net=local");
-  await page.getByRole("button", { name: "Host a table" }).click();
   await page.fill("#ct-name", name);
-  await page.getByRole("button", { name: "Host table" }).click();
+  await page.getByRole("button", { name: "Open a table" }).click();
   await page.waitForFunction(() => !!window.cardTable?.session);
 }
 async function join(page, url, name) {
   await page.goto(url);
-  await expect(page.getByRole("heading", { name: "Join a table" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Join table" })).toBeVisible();
   await page.fill("#ct-name", name);
   await page.getByRole("button", { name: "Join table" }).click();
   await page.waitForFunction(() => window.cardTable?.session?.connected);
@@ -233,7 +232,6 @@ test("your name is remembered for next time", async ({ context }) => {
   const A = await tab(context);
   await host(A, "Mike");
   await A.goto("/index.html?net=local");
-  await A.getByRole("button", { name: "Host a table" }).click();
   await expect(A.locator("#ct-name")).toHaveValue("Mike");
 });
 
@@ -250,10 +248,9 @@ test("Invite shows the table's link and a QR code", async ({ context }) => {
 test("pick a color with your name; a joiner asking for a taken one gets a free one", async ({ context }) => {
   const A = await tab(context), B = await tab(context);
   await A.goto("/index.html?net=local");
-  await A.getByRole("button", { name: "Host a table" }).click();
   await A.fill("#ct-name", "Mike");
   await A.locator('.ct-swatch[data-color="#a3d977"]').click();
-  await A.getByRole("button", { name: "Host table" }).click();
+  await A.getByRole("button", { name: "Open a table" }).click();
   await A.waitForFunction(() => !!window.cardTable?.session);
   expect((await state(A)).seats[0].color).toBe("#a3d977");
   await B.goto(A.url());
@@ -340,4 +337,55 @@ test("the host can make a player a spectator, and kick someone off the table", a
   // and can't come back to this table
   await B.goto(A.url());
   await expect(B.getByRole("heading", { name: "You were removed from the table" })).toBeVisible({ timeout: 10000 });
+});
+
+test("a table gets a 5-letter code; the home screen lists it, and joining by code works", async ({ context }) => {
+  const A = await tab(context), B = await tab(context);
+  await host(A, "Mike");
+  const code = new URL(A.url()).hash.slice(1);
+  expect(code).toMatch(/^[A-HJ-NP-Z2-9]{5}$/);
+  await expect(A.locator("#codeTag")).toHaveText(code);
+  // Ana types the code on the home screen
+  await B.goto("/index.html?net=local");
+  await B.locator(".ct-code-in").fill(code.toLowerCase());
+  await expect(B.getByRole("button", { name: "Join table" })).toBeVisible();
+  await B.fill("#ct-name", "Ana");
+  await B.getByRole("button", { name: "Join table" }).click();
+  await B.waitForFunction(() => window.cardTable?.session?.connected);
+  await seat(A, B, "Ana");
+  // both home screens list the table: Mike's as his, Ana's by its host's name
+  await A.goto("/index.html?net=local");
+  await expect(A.locator(".ct-recent a", { hasText: code })).toContainText("hosting");
+  await B.goto("/index.html?net=local");
+  await expect(B.locator(".ct-recent a", { hasText: code })).toContainText("Mike's table");
+  // and one click takes Mike back to his table
+  await A.locator(".ct-recent a", { hasText: code }).click();
+  await A.waitForFunction(() => !!window.cardTable?.session);
+  expect(new URL(A.url()).hash.slice(1)).toBe(code);
+});
+
+test("a code nobody is hosting says so", async ({ context }) => {
+  const B = await tab(context);
+  await B.goto("/index.html?net=local");
+  await B.locator(".ct-code-in").fill("ZZZZZ");
+  await B.fill("#ct-name", "Ana");
+  await B.getByRole("button", { name: "Join table" }).click();
+  await expect(B.getByRole("heading", { name: "Can't reach table ZZZZZ" })).toBeVisible({ timeout: 40000 });
+});
+
+test("with each tab a different player, two tabs are two people", async ({ context }) => {
+  await context.addInitScript(() => localStorage.setItem("card-table:settings", JSON.stringify({ tabsArePlayers: true })));
+  const A = await tab(context), B = await tab(context);
+  await A.goto("/index.html");
+  await A.waitForFunction(() => !!window.cardTable);
+  await B.goto("/index.html");
+  await B.waitForFunction(() => !!window.cardTable);
+  const a = await A.evaluate(() => [window.cardTable.tab, window.cardTable.player]);
+  const b = await B.evaluate(() => [window.cardTable.tab, window.cardTable.player]);
+  expect(a[0]).not.toBe(b[0]);
+  expect(a[1]).not.toBe(b[1]);
+  // the gear says which tab this is
+  await B.locator(".ct-gate .ct-gear").click();
+  await expect(B.getByRole("switch", { name: /Each tab is a different player/ })).toHaveAttribute("aria-checked", "true");
+  await expect(B.locator(".ct-sheet-note")).toContainText("player tab");
 });

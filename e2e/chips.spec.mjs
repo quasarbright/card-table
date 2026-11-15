@@ -9,9 +9,8 @@ async function open(page) {
   page.on("console", (m) => { if (m.type() === "error" && !/net::ERR_FAILED/.test(m.text())) errors.push(m.text()); });
   await page.route((url) => url.hostname !== "localhost", serveFromCache);
   await page.goto("/index.html?net=local");
-  await page.getByRole("button", { name: "Host a table" }).click();
   await page.fill("#ct-name", "Mike");
-  await page.getByRole("button", { name: "Host table" }).click();
+  await page.getByRole("button", { name: "Open a table" }).click();
   await page.waitForFunction(() => !!window.cardTable?.session);
   await page.evaluate(() => {
     const t = window.cardTable; t.reset(2);
