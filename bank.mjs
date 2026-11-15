@@ -134,9 +134,9 @@ export function createBank(ctx) {
         <div class="ct-row"><input class="ct-text" data-amt="start" inputmode="numeric" /><button class="ct-soft ct-soft-inline" data-save-start>Save</button></div></div></details>
       <details><summary>Add a pot</summary><div>
         <div class="ct-row"><input class="ct-text" data-pot-name maxlength="20" /><button class="ct-soft ct-soft-inline" data-add-pot>Add</button></div></div></details>
-      <details><summary class="ct-danger-text">Put the chips away</summary><div>
+      <details><summary class="ct-danger-text">Remove all chips</summary><div>
         <p>Everyone's chips and the pots go away for good. Undo brings them back.</p>
-        <button class="ct-soft ct-danger-btn" data-end>Put the chips away</button></div></details>`, {
+        <button class="ct-soft ct-danger-btn" data-end>Remove all chips</button></div></details>`, {
       update: () => { if (!st().bank) return false; draw(); },
     });
     const rows = $("[data-rows]", el);
@@ -309,7 +309,7 @@ export function createBank(ctx) {
     <div class="ct-dock-amt"><input data-amt inputmode="numeric" placeholder="0" aria-label="Amount" /><button type="button" class="ct-dock-clr" data-clear aria-label="Clear">×</button></div>
     <div class="ct-quickrow" data-quick></div>
     <button class="ct-send" type="submit" data-send><span data-l1>Bet</span><small data-l2></small></button>
-    <button type="button" class="ct-dock-manage" data-manage hidden title="Hand out more, set anyone's count, add pots, or put the chips away">Manage</button>`;
+    <button type="button" class="ct-dock-manage" data-manage hidden title="Hand out more, set anyone's count, add pots, or remove all chips">Manage</button>`;
   document.body.appendChild(dock);
   const amtIn = $("[data-amt]", dock);
   let dest = null, destAuto = false;

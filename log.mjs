@@ -80,7 +80,7 @@ export function describe(before, action, by, after) {
     case "setMessy": return line(action.messy ? " fanned out a stack" : " squared up a stack");
     // chips, as my chips sketch says them
     case "startChips": return line(" handed out chips: ", amt(action.start), " each");
-    case "endChips": return line(" put the chips away");
+    case "endChips": return line(" removed all chips");
     case "transfer": {
       const own = action.from.k === "p" && action.from.id === seatOf(before, by)?.player;
       if (own) return line(action.to.k === "pot" ? " bet " : " gave ", amt(action.amount), " → ", stackRef(before, action.to));

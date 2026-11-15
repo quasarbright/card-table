@@ -103,7 +103,7 @@ test("the host's Chips sheet: set a count, a rebuy, a new pot, and putting them 
   await settle(A);
   await expect(A.locator(".ct-pot")).toHaveCount(2);
   await A.locator(".ct-dock [data-manage]").click();
-  await A.locator(".ct-bank-sheet summary", { hasText: "Put the chips away" }).click();
+  await A.locator(".ct-bank-sheet summary", { hasText: "Remove all chips" }).click();
   await A.locator(".ct-bank-sheet [data-end]").click();
   await settle(A);
   expect((await state(A)).bank).toBeNull();
