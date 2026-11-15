@@ -14,12 +14,12 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
 
   <!-- identity: a card room at night, the same as my chips sketch: deep felt green, cream type,
-       gold for the thing you press. Fraunces italic for the wordmark, Manrope (tabular figures)
+       gold for the thing you press. Playfair Display italic for the wordmark, Manrope (tabular figures)
        for everything else; Bitter only on the cards' indices. Menus and sheets are dark panels.
        The one motif: a card tips toward whoever holds or looks at it. -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@1,9..144,600;1,9..144,800&family=Manrope:wght@400;500;600;700;800&family=Bitter:wght@700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@1,800&family=Manrope:wght@400;500;600;700;800&family=Bitter:wght@700&display=swap" rel="stylesheet">
 
   <style>
     :root {
@@ -36,15 +36,15 @@
       --danger:    #f0707f;
       --font-ui: "Manrope", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
       --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
-      --font-display: "Fraunces", Georgia, serif;
+      --font-display: "Playfair Display", Georgia, serif;
       --felt: #1d4a35;
       --walnut: #3b2719;
       --ivory: #f2ede0;
     }
     html, body { margin: 0; height: 100%; overflow: hidden; color: var(--text); font-family: var(--font-ui); font-variant-numeric: tabular-nums; }
     body { background: radial-gradient(120% 60% at 50% -10%, #1a4a35 0%, transparent 60%), var(--bg); }
-    /* the wordmark: gold Fraunces italic */
-    .ct-wordmark { font-family: var(--font-display); font-style: italic; font-weight: 800; letter-spacing: -.02em; color: var(--accent); line-height: 1; }
+    /* the wordmark: gold Playfair Display italic */
+    .ct-wordmark { font-family: var(--font-display); font-style: italic; font-weight: 800; letter-spacing: -.01em; color: var(--accent); line-height: 1; }
 
     /* ---- header ---- */
     /* one line across the top, above the table */
