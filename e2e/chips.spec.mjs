@@ -87,7 +87,7 @@ test("the host's Chips sheet: set a count, a rebuy, a new pot, and putting them 
   await host(A);
   await startChips(A);
   const me = await A.evaluate(() => window.cardTable.player);
-  await A.getByRole("button", { name: "Chips", exact: true }).click();
+  await A.locator(".ct-dock [data-manage]").click();
   await A.locator(".ct-prow-n").first().fill("750");
   await A.locator(".ct-prow-n").first().press("Enter");
   await settle(A);
@@ -97,12 +97,12 @@ test("the host's Chips sheet: set a count, a rebuy, a new pot, and putting them 
   await A.getByRole("button", { name: "Give", exact: true }).click();
   await settle(A);
   expect((await state(A)).bank.chips[me]).toBe(850);
-  await A.getByRole("button", { name: "Chips", exact: true }).click();
+  await A.locator(".ct-dock [data-manage]").click();
   await A.locator(".ct-bank-sheet summary", { hasText: "Add a pot" }).click();
   await A.getByRole("button", { name: "Add", exact: true }).click();
   await settle(A);
   await expect(A.locator(".ct-pot")).toHaveCount(2);
-  await A.getByRole("button", { name: "Chips", exact: true }).click();
+  await A.locator(".ct-dock [data-manage]").click();
   await A.locator(".ct-bank-sheet summary", { hasText: "Put the chips away" }).click();
   await A.locator(".ct-bank-sheet [data-end]").click();
   await settle(A);
@@ -186,4 +186,24 @@ test("the host's sheet for a player: their chips, their exact amount, and their 
   // the dock and the bar don't touch
   const gap = await A.evaluate(() => document.querySelector(".ct-bar").getBoundingClientRect().top - document.querySelector(".ct-dock").getBoundingClientRect().bottom);
   expect(gap).toBeGreaterThan(5);
+});
+
+test("the bar's Chips button shows and hides your dock; only the host's dock has Manage", async ({ context }) => {
+  const A = await tab(context), B = await tab(context);
+  await host(A);
+  await join(B, A.url(), "Ana");
+  await seat(A, B, "Ana");
+  // before chips, only the host has the button
+  await expect(B.getByRole("button", { name: "Chips", exact: true })).toBeHidden();
+  await startChips(A);
+  const chips = B.getByRole("button", { name: "Chips", exact: true });
+  await expect(chips).toHaveAttribute("aria-pressed", "true");
+  await expect(B.locator(".ct-dock")).toBeVisible();
+  await expect(B.locator(".ct-dock [data-manage]")).toBeHidden();
+  await expect(A.locator(".ct-dock [data-manage]")).toBeVisible();
+  await chips.click();
+  await expect(B.locator(".ct-dock")).toBeHidden();
+  await expect(chips).toHaveAttribute("aria-pressed", "false");
+  await chips.click();
+  await expect(B.locator(".ct-dock")).toBeVisible();
 });

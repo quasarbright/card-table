@@ -290,6 +290,11 @@
       background: var(--panel-2); color: var(--text); border: 1px solid var(--border); box-shadow: 0 4px 12px rgba(0,0,0,.4); pointer-events: none;
     }
 
+    /* the Chips button while your dock is open */
+    .ct-bar-btn[aria-pressed="true"] { background: var(--panel-2); box-shadow: inset 0 0 0 1.5px var(--accent); color: var(--accent); }
+    .ct-dock-manage { height: 46px; padding: 0 12px; border-radius: 13px; border: 1px solid var(--border); background: transparent; color: var(--muted) !important; font: 700 .85rem var(--font-ui) !important; }
+    .ct-dock-manage:hover { border-color: var(--faint); color: var(--text) !important; }
+    .ct-dock-manage[hidden] { display: none; }
     .ct-bar-btn.ct-bar-share { background: var(--accent); color: var(--on-accent); font-weight: 800; }
     .ct-bar-btn.ct-bar-share:hover { background: var(--accent-hi); }
     .ct-bar [hidden] { display: none !important; }

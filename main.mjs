@@ -323,7 +323,11 @@ function refreshBar() {
   undoEl.disabled = !session?.canUndo();
   viewerEl.closest(".ct-group").hidden = !(host && alone && state.seats.length > 1);
   document.getElementById("gather").hidden = !seated();
-  document.getElementById("chips").hidden = !host;
+  // the Chips button: the host's way to hand chips out; once they're out, anyone's dock, open or shut
+  const chipsBtn = document.getElementById("chips"), has = bank.hasChips;
+  chipsBtn.hidden = !(has || (host && !state.bank));
+  chipsBtn.setAttribute("aria-pressed", String(has && bank.dockOpen));
+  chipsBtn.title = has ? (bank.dockOpen ? "Hide your chips" : "Show your chips: bet or give from them") : "Play with chips: hand everyone a stack";
   document.body.classList.toggle("ct-is-host", host);
   document.getElementById("share").hidden = !session;
   if (host && !alone && me !== session.seat) { me = session.seat; view.viewer = me; draw(); }
@@ -345,7 +349,9 @@ document.getElementById("gather").addEventListener("click", () => {
 });
 document.getElementById("share").addEventListener("click", (e) => openShare(e.currentTarget, tableCode));
 // the host's chips: hand them out, then manage them
-document.getElementById("chips").addEventListener("click", () => bank.chipsSheet());
+document.getElementById("chips").addEventListener("click", () => {
+  if (bank.hasChips) { bank.toggleDock(); refreshBar(); } else bank.chipsSheet();
+});
 // ---- helpers -------------------------------------------------------------------------------
 
 let idCounter = 0;

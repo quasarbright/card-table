@@ -308,10 +308,14 @@ export function createBank(ctx) {
     <div class="ct-dests" data-dests></div>
     <div class="ct-dock-amt"><input data-amt inputmode="numeric" placeholder="0" aria-label="Amount" /><button type="button" class="ct-dock-clr" data-clear aria-label="Clear">×</button></div>
     <div class="ct-quickrow" data-quick></div>
-    <button class="ct-send" type="submit" data-send><span data-l1>Bet</span><small data-l2></small></button>`;
+    <button class="ct-send" type="submit" data-send><span data-l1>Bet</span><small data-l2></small></button>
+    <button type="button" class="ct-dock-manage" data-manage hidden title="Hand out more, set anyone's count, add pots, or put the chips away">Manage</button>`;
   document.body.appendChild(dock);
   const amtIn = $("[data-amt]", dock);
   let dest = null, destAuto = false;
+  // whether you've got the dock open (the bar's Chips button); open unless you closed it
+  let dockOpen = (() => { try { return localStorage.getItem("card-table:dock") !== "closed"; } catch { return true; } })();
+  $("[data-manage]", dock).addEventListener("click", () => manageSheet());
   // just above the bar, whatever height the bar is (it wraps on narrow screens)
   function placeDock() {
     const bar = document.querySelector(".ct-bar");
@@ -320,7 +324,8 @@ export function createBank(ctx) {
   addEventListener("resize", placeDock);
   function renderDock() {
     const b = st().bank, me = myPlayer();
-    const show = !!b && !!me && me in b.chips;
+    const show = !!b && !!me && me in b.chips && dockOpen;
+    $("[data-manage]", dock).hidden = !isHost();
     if (dock.hidden === show) { dock.hidden = !show; document.body.classList.toggle("ct-has-dock", show); placeDock(); ctx.relayout(); }
     if (!show) return;
     placeDock();
@@ -413,6 +418,14 @@ export function createBank(ctx) {
 
   return {
     renderDock,
+    // the bar's Chips button: before chips, the host's setup; after, your dock, open or shut
+    get hasChips() { const me = myPlayer(); return !!st().bank && !!me && me in st().bank.chips; },
+    get dockOpen() { return dockOpen; },
+    toggleDock() {
+      dockOpen = !dockOpen;
+      try { localStorage.setItem("card-table:dock", dockOpen ? "open" : "closed"); } catch {}
+      renderDock();
+    },
     chipsSheet, potSheet, playerSheet,
     // a change landed: a note for chips moving, and every open sheet catches up
     changed(line) {
