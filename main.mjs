@@ -161,7 +161,7 @@ function relayout() {
   const narrow = innerWidth < 600;
   view.stage.classList.add("ct-still");
   // (with chips on, your dock sits above the bar)
-  view.layout(narrow ? 70 : 52, (narrow ? 120 : 92) + (bank?.dockHeight ?? 0));
+  view.layout(narrow ? 70 : 52, Math.max(narrow ? 120 : 92, bank?.reserve ?? 0));
   draw({ instant: true });
   requestAnimationFrame(() => view.stage.classList.remove("ct-still"));
 }
@@ -894,7 +894,7 @@ tableEl.addEventListener("click", (e) => {
   const seat = plate && state.seats.find((x) => x.id === plate.dataset.seat);
   if (!seat?.player) return;
   // with chips on: their chips, with the seat options a click further
-  if (bank.playerSheet(seat.player, { more: seat.player !== player ? () => openPersonMenu(seat.player, plate) : null })) return;
+  if (bank.playerSheet(seat.player)) return;
   if (seat.player !== player) openPersonMenu(seat.player, plate);
 });
 // the host clicking a pot: award it

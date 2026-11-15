@@ -254,7 +254,7 @@ export function createBank(ctx) {
   }
 
   // ---- another player's chips (the host) ----
-  function playerSheet(playerId, { more } = {}) {
+  function playerSheet(playerId) {
     if (!isHost() || chipsOf(st(), { k: "p", id: playerId }) == null) return false;
     const ref = { k: "p", id: playerId };
     const { el, close } = openSheet(`
@@ -263,10 +263,12 @@ export function createBank(ctx) {
         ${amountField("move")}
         <div class="ct-dests ct-dests-wrap" data-dests></div>
         <button class="ct-big" data-move disabled>Move</button></div>
-      <details><summary>Set the exact amount</summary><div><p>For buy-ins, rebuys, or fixing a mistake.</p><div class="ct-row">
+      <div class="ct-block"><span class="ct-field-label">Set their exact chip amount</span><p>For buy-ins, rebuys, or fixing a mistake.</p><div class="ct-row">
         <input class="ct-text" data-amt="set" inputmode="numeric" placeholder="New amount" />
-        <button class="ct-soft ct-soft-inline" data-set>Set</button></div></div></details>
-      ${more ? `<button class="ct-soft" data-more>Seat options…</button>` : ""}`, {
+        <button class="ct-soft ct-soft-inline" data-set>Set</button></div></div>
+      ${playerId !== myPlayer() ? `<div class="ct-block ct-seat-opts"><span class="ct-field-label">Their seat</span>
+        <button class="ct-soft" data-unseat>Make spectator <small>they get up and watch; the seat and its hand stay</small></button>
+        <button class="ct-soft ct-danger-btn" data-kick>Kick from the table</button></div>` : ""}`, {
       update: () => { if (chipsOf(st(), ref) == null) return false; draw(); },
     });
     const dests = sheetDests($("[data-dests]", el), ref, () => moveBtn());
@@ -284,7 +286,14 @@ export function createBank(ctx) {
     };
     $("[data-move]", el).addEventListener("click", () => { run({ type: "transfer", from: ref, to: dests.value, amount: readAmt($("[data-amt=move]", el)) }); close(); });
     $("[data-set]", el).addEventListener("click", () => { if ($("[data-amt=set]", el).value) { run({ type: "setChips", target: ref, amount: readAmt($("[data-amt=set]", el)) }); close(); } });
-    $("[data-more]", el)?.addEventListener("click", () => { close(); more(); });
+    $("[data-unseat]", el)?.addEventListener("click", () => { close(); ctx.session()?.unseat(playerId); });
+    // kicking can't be undone: it asks once more
+    const kick = $("[data-kick]", el);
+    kick?.addEventListener("click", () => {
+      if (kick.dataset.sure) { close(); ctx.session()?.kick(playerId); return; }
+      kick.dataset.sure = "1";
+      kick.textContent = `Kick ${nameOf(ref)} for good?`;
+    });
     draw();
     return true;
   }
@@ -303,11 +312,18 @@ export function createBank(ctx) {
   document.body.appendChild(dock);
   const amtIn = $("[data-amt]", dock);
   let dest = null, destAuto = false;
+  // just above the bar, whatever height the bar is (it wraps on narrow screens)
+  function placeDock() {
+    const bar = document.querySelector(".ct-bar");
+    if (bar && !dock.hidden) dock.style.bottom = `${innerHeight - bar.getBoundingClientRect().top + 10}px`;
+  }
+  addEventListener("resize", placeDock);
   function renderDock() {
     const b = st().bank, me = myPlayer();
     const show = !!b && !!me && me in b.chips;
-    if (dock.hidden === show) { dock.hidden = !show; document.body.classList.toggle("ct-has-dock", show); ctx.relayout(); }
+    if (dock.hidden === show) { dock.hidden = !show; document.body.classList.toggle("ct-has-dock", show); placeDock(); ctx.relayout(); }
     if (!show) return;
+    placeDock();
     const refs = allRefs({ k: "p", id: me });
     if (dest && (chipsOf(st(), dest) == null || (destAuto && b.pots.length !== 1))) dest = null;
     if (!dest && b.pots.length === 1) { dest = { k: "pot", id: b.pots[0].id }; destAuto = true; }
@@ -405,6 +421,7 @@ export function createBank(ctx) {
       if (line?.money && st().bank) note(line, line.parts.find((x) => x?.r === "pot")?.id ?? null);
       if (notes.children.length) placeNotes();
     },
-    get dockHeight() { return dock.hidden ? 0 : dock.offsetHeight + 12; },
+    // how much of the bottom of the screen the dock and the bar take together (0: no dock)
+    get reserve() { placeDock(); return dock.hidden ? 0 : innerHeight - dock.getBoundingClientRect().top + 10; },
   };
 }

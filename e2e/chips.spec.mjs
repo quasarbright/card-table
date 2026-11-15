@@ -165,3 +165,25 @@ test("the history and settings buttons sit at the top right", async ({ context }
   expect(s.x + s.width).toBeGreaterThan(w - 40);
   expect(h.x).toBeLessThan(s.x);
 });
+
+test("the host's sheet for a player: their chips, their exact amount, and their seat, all in one", async ({ context }) => {
+  const A = await tab(context), B = await tab(context);
+  await host(A);
+  await join(B, A.url(), "Ana");
+  await seat(A, B, "Ana");
+  await startChips(A);
+  await A.locator('.ct-plate[data-seat="s1"]').click();
+  const sheet = A.locator(".ct-bank-sheet");
+  await expect(sheet.getByText("Set their exact chip amount")).toBeVisible();
+  await sheet.locator("[data-amt=set]").fill("1234");
+  await sheet.getByRole("button", { name: "Set", exact: true }).click();
+  await settle(A);
+  const ana = (await state(A)).seats[1].player;
+  expect((await state(A)).bank.chips[ana]).toBe(1234);
+  await A.locator('.ct-plate[data-seat="s1"]').click();
+  await A.getByRole("button", { name: /Make spectator/ }).click();
+  await B.waitForFunction(() => !window.cardTable.session.seat);
+  // the dock and the bar don't touch
+  const gap = await A.evaluate(() => document.querySelector(".ct-bar").getBoundingClientRect().top - document.querySelector(".ct-dock").getBoundingClientRect().bottom);
+  expect(gap).toBeGreaterThan(5);
+});
