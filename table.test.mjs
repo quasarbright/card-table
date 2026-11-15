@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { newTable, apply, locate, canSee, tiltedToward, shuffledOrder, checkConservation, chipTotal, chipHand, handChips, touchesLockedHand, needsHost, CX, CY } from "./table.mjs";
+import { newTable, apply, locate, canSee, tiltedToward, shuffledOrder, checkConservation, chipTotal, touchesLockedHand, needsHost, movesOthersChips, CX, CY } from "./table.mjs";
+import { describe } from "./log.mjs";
 
 const run = (state, ...actions) => actions.reduce((s, a) => {
   const next = apply(s, a);
@@ -215,66 +216,73 @@ test("a card can go into the middle of a stack, counted before it leaves", () =>
   checkConservation(s);
 });
 
-// ---- chips ----
+// ---- chips (the ledger) ----
 const sat = (s, ...seats) => seats.reduce((t, seat, k) => apply(t, { type: "sit", seat, player: "p" + k, name: seat }), s);
 
-test("chips: made, moved, merged; the total only changes when the host makes or removes them", () => {
-  let s = sat(newTable(3), "s0", "s1", "s2");
-  s = apply(s, { type: "makeChips", id: "bank", amount: 1000, to: { x: CX, y: CY } });
-  assert.equal(chipTotal(s), 1000);
-  s = apply(s, { type: "takeChips", from: "bank", amount: 250, id: "a", to: { hand: "s0" } });
-  s = apply(s, { type: "takeChips", from: "bank", amount: 100, id: "b", to: { hand: "s0" } });
-  assert.deepEqual(handChips(s, "s0"), ["a", "b"]);
-  assert.equal(s.chips.bank.amount, 650);
-  // a bet out of the hand onto the felt, then onto the pot
-  s = apply(s, { type: "takeChips", from: "a", amount: 40, id: "bet", to: { x: CX, y: CY + 100 } });
-  s = apply(s, { type: "moveChips", id: "bet", to: { stack: "bank" } });
-  assert.equal(s.chips.bet, undefined);
-  assert.equal(s.chips.bank.amount, 690);
-  assert.equal(s.chips.a.amount, 210);
-  assert.equal(chipTotal(s), 1000);
-  // taking all of a stack moves the stack itself
-  s = apply(s, { type: "takeChips", from: "b", amount: 100, id: "x", to: { hand: "s1" } });
-  assert.equal(chipHand(s, "b"), "s1");
-  assert.equal(s.chips.x, undefined);
-  s = apply(s, { type: "removeChips", id: "b" });
-  assert.equal(chipTotal(s), 900);
+test("chips: off until the host starts them; everyone seated gets the start, newcomers too", () => {
+  let s = sat(newTable(3), "s0", "s1");
+  assert.equal(s.bank ?? null, null);
+  s = apply(s, { type: "startChips", start: 1000 });
+  assert.deepEqual(s.bank.chips, { p0: 1000, p1: 1000 });
+  assert.equal(s.bank.pots.length, 1);
+  s = apply(s, { type: "sit", seat: "s2", player: "p2", name: "Jo" });
+  assert.equal(s.bank.chips.p2, 1000);
+  assert.equal(chipTotal(s), 3000);
+  s = apply(s, { type: "endChips" });
+  assert.equal(s.bank, null);
 });
 
-test("chips: amounts are whole numbers, never more than the stack has", () => {
-  let s = apply(newTable(2), { type: "makeChips", id: "c", amount: 10, to: { x: CX, y: CY } });
-  for (const amount of [0, -3, 2.5, 11]) assert.throws(() => apply(s, { type: "takeChips", from: "c", amount, id: "d", to: { hand: "s0" } }));
-  assert.throws(() => apply(s, { type: "makeChips", id: "e", amount: 1.5, to: { x: CX, y: CY } }));
+test("chips: bets go into the pot, which is awarded or refunded; the total only changes when the host says", () => {
+  let s = apply(sat(newTable(3), "s0", "s1", "s2"), { type: "startChips", start: 100 });
+  const bet = (id, n) => ({ type: "transfer", from: { k: "p", id }, to: { k: "pot", id: "pot" }, amount: n });
+  s = apply(s, bet("p0", 30)); s = apply(s, bet("p1", 30)); s = apply(s, bet("p2", 31));
+  assert.equal(s.bank.pots[0].chips, 91);
+  assert.throws(() => apply(s, bet("p0", 71)));
+  assert.throws(() => apply(s, bet("p0", 2.5)));
+  const split = apply(s, { type: "award", pot: "pot", winners: ["p0", "p1"] });
+  assert.deepEqual(split.bank.chips, { p0: 115, p1: 115, p2: 69 });
+  assert.equal(split.bank.pots[0].chips, 1); // the odd chip stays
+  const back = apply(s, { type: "refund", pot: "pot" });
+  assert.deepEqual(back.bank.chips, { p0: 100, p1: 100, p2: 100 });
+  assert.equal(chipTotal(split), 300);
+  s = apply(split, { type: "giveAll", amount: 50 });
+  assert.equal(chipTotal(s), 450);
+  s = apply(s, { type: "setChips", target: { k: "p", id: "p2" }, amount: 0 });
+  assert.equal(s.bank.chips.p2, 0);
 });
 
-test("chips: dealt to each seat while the stack lasts", () => {
-  let s = sat(newTable(3), "s0", "s1", "s2");
-  s = apply(s, { type: "makeChips", id: "c", amount: 250, to: { x: CX, y: CY } });
-  s = apply(s, { type: "dealChips", from: "c", amount: 100, seats: ["s1", "s2", "s0"], ids: ["d1", "d2", "d3"] });
-  assert.equal(s.chips.d1.amount, 100);
-  assert.equal(s.chips.d2.amount, 100);
-  assert.equal(s.chips.d3, undefined);
-  assert.equal(s.chips.c.amount, 50);
-  assert.equal(chipTotal(s), 250);
+test("chips: pots come and go; one with chips in it can't be removed", () => {
+  let s = apply(sat(newTable(2), "s0", "s1"), { type: "startChips", start: 100 });
+  s = apply(s, { type: "addPot", id: "side" });
+  assert.equal(s.bank.pots[1].name, "Side pot");
+  s = apply(s, { type: "transfer", from: { k: "p", id: "p0" }, to: { k: "pot", id: "side" }, amount: 10 });
+  assert.throws(() => apply(s, { type: "removePot", id: "side" }));
+  s = apply(s, { type: "renamePot", id: "side", name: "  Mike's  side " });
+  assert.equal(s.bank.pots[1].name, "Mike's side");
 });
 
-test("chips: a locked hand's chips are its player's; only the host makes chips", () => {
+test("chips: only the host hands them out; players move only their own", () => {
+  const s = apply(sat(newTable(2), "s0", "s1"), { type: "startChips", start: 100 });
+  assert.equal(needsHost({ type: "award", pot: "pot", winners: ["p0"] }), true);
+  assert.equal(needsHost({ type: "batch", actions: [{ type: "giveAll", amount: 5 }] }), true);
+  assert.equal(needsHost({ type: "transfer" }), false);
+  const own = { type: "transfer", from: { k: "p", id: "p1" }, to: { k: "pot", id: "pot" }, amount: 5 };
+  assert.equal(movesOthersChips(s, own, "s1"), false);
+  assert.equal(movesOthersChips(s, own, "s0"), true);
+});
+
+test("history lines: say what happened, naming a card only when everyone can see it", () => {
   let s = sat(newTable(2), "s0", "s1");
-  s = apply(s, { type: "makeChips", id: "c", amount: 50, to: { hand: "s1" } });
-  assert.equal(touchesLockedHand(s, { type: "takeChips", from: "c", amount: 5, id: "d", to: { hand: "s0" } }, "s0"), true);
-  assert.equal(touchesLockedHand(s, { type: "takeChips", from: "c", amount: 5, id: "d", to: { hand: "s0" } }, "s1"), false);
-  s = apply(s, { type: "setHandLocked", seat: "s1", locked: false });
-  assert.equal(touchesLockedHand(s, { type: "moveChips", id: "c", to: { x: CX, y: CY } }, "s0"), false);
-  assert.equal(needsHost({ type: "batch", actions: [{ type: "makeChips", id: "z", amount: 1, to: { hand: "s0" } }] }), true);
-  assert.equal(needsHost({ type: "moveChips", id: "c", to: { hand: "s0" } }), false);
-});
-
-test("chips: a removed seat's chips come to the middle", () => {
-  let s = apply(newTable(3), { type: "makeChips", id: "c", amount: 50, to: { hand: "s2" } });
-  s = apply(s, { type: "setSeats", n: 2 });
-  assert.equal(chipHand(s, "c"), null);
-  assert.equal(s.chips.c.amount, 50);
-  assert.equal(s.chipHands.s2, undefined);
+  const line = (act) => { const next = apply(s, act); const parts = describe(s, act, "s0", next); s = next; return parts.map((x) => typeof x === "string" ? x : x.card ?? x.n ?? x.a).join(""); };
+  assert.equal(line({ type: "deal", pile: "deck", count: 2, seats: ["s0", "s1"] }), "s0 dealt 2 cards each");
+  const mine = s.hands.s0[0];
+  assert.equal(line({ type: "moveCards", cards: [mine], to: { newPile: { id: "a", x: CX, y: CY } } }), "s0 played a card");
+  assert.equal(line({ type: "flip", cards: [mine] }), `s0 turned over ${s.cards[mine].rank}${({ S: "♠", H: "♥", D: "♦", C: "♣" })[s.cards[mine].suit]}`);
+  // taking someone's card into your hand doesn't say which
+  const theirs = s.hands.s1[0];
+  assert.equal(line({ type: "moveCards", cards: [theirs], to: { hand: "s0" } }), "s0 took a card from s1");
+  s = apply(s, { type: "startChips", start: 100 });
+  assert.equal(line({ type: "transfer", from: { k: "p", id: "p0" }, to: { k: "pot", id: "pot" }, amount: 20 }), "s0 bet 20 → Pot");
 });
 
 test("colors: the twelve from chips; the first seats get ones far apart; old colors map to the nearest", async () => {
@@ -284,4 +292,28 @@ test("colors: the twelve from chips; the first seats get ones far apart; old col
   assert.deepEqual(newTable(4).seats.map((x) => COLOR_NAMES[x.color]), ["blue", "red", "yellow", "green"]);
   assert.equal(newColor("#6cb8f0"), "#3b82f6");
   assert.equal(newColor("#ef4444"), "#ef4444");
+});
+
+test("history: rewind keeps the later lines to restore; a new change drops them", async () => {
+  const { hostSession } = await import("./sync.mjs");
+  const net = { on() {}, onLeave() {}, send() {} };
+  const st = apply(newTable(1), { type: "sit", seat: "s0", player: "me", name: "Mo" });
+  const h = hostSession(net, st, { player: "me", name: "Mo" }, { onChange() {}, onRoster() {}, save() {} });
+  h.dispatch({ type: "deal", pile: "deck", count: 1, seats: ["s0"] });
+  h.dispatch({ type: "deal", pile: "deck", count: 1, seats: ["s0"] });
+  h.dispatch({ type: "deal", pile: "deck", count: 1, seats: ["s0"] });
+  assert.equal(h.log.length, 3);
+  h.goto(h.log[0].id);
+  assert.equal(h.state.hands.s0.length, 1);
+  assert.equal(h.log.length, 3);
+  h.goto(h.log[2].id); // restore
+  assert.equal(h.state.hands.s0.length, 3);
+  h.undo(); h.undo();
+  assert.equal(h.state.hands.s0.length, 1);
+  h.dispatch({ type: "shuffle", pile: "deck", order: [...h.state.piles.deck.cards] });
+  assert.equal(h.log.length, 2);
+  assert.equal(h.head, h.log[1].id);
+  h.undo(); h.undo();
+  assert.equal(h.state.hands.s0.length, 0);
+  assert.equal(h.canUndo(), false);
 });

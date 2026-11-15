@@ -1,195 +1,167 @@
-// Chips, with real mouse and keyboard: made by the host, split, taken, dealt, carried and merged.
+// Chips, as in my chips sketch: off until the host hands them out; then bets from the dock, pots on
+// the felt, the host's sheets; and the table's history, with rewind and restore.
 import { test, expect } from "@playwright/test";
 import { serveFromCache } from "./helpers.mjs";
-import { CX, CY } from "../table.mjs";
 
-async function open(page) {
+async function tab(context) {
+  const page = await context.newPage();
   const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
   page.on("console", (m) => { if (m.type() === "error" && !/net::ERR_FAILED/.test(m.text())) errors.push(m.text()); });
   await page.route((url) => url.hostname !== "localhost", serveFromCache);
+  page.errors = errors;
+  return page;
+}
+async function host(page, name = "Mike") {
   await page.goto("/index.html?net=local");
-  await page.fill("#ct-name", "Mike");
+  await page.fill("#ct-name", name);
   await page.getByRole("button", { name: "Open a table" }).click();
   await page.waitForFunction(() => !!window.cardTable?.session);
-  await page.evaluate(() => {
+}
+async function join(page, url, name) {
+  await page.goto(url);
+  await page.fill("#ct-name", name);
+  await page.getByRole("button", { name: "Join table" }).click();
+  await page.waitForFunction(() => window.cardTable?.session?.connected);
+}
+async function seat(A, B, name) {
+  await A.locator(".ct-toast", { hasText: name }).getByRole("button", { name: "Give a seat" }).click();
+  await B.waitForFunction(() => !!window.cardTable?.session?.seat);
+}
+const state = (page) => page.evaluate(() => window.cardTable.state);
+const settle = (page) => page.waitForTimeout(500);
+async function startChips(A, amount = "1,000") {
+  await A.getByRole("button", { name: "Chips", exact: true }).click();
+  await A.locator(".ct-bank-sheet [data-amt=start]").fill(amount);
+  await A.getByRole("button", { name: /^Give everyone/ }).click();
+  await settle(A);
+}
+async function bet(page, n) {
+  await page.locator(".ct-dock [data-amt]").fill(String(n));
+  await page.locator(".ct-dock [data-send]").click();
+  await settle(page);
+}
+
+test("no chips until the host hands them out; then counts on the plates, a pot, and a dock", async ({ context }) => {
+  const A = await tab(context);
+  await host(A);
+  await expect(A.locator(".ct-plate-chips:visible")).toHaveCount(0);
+  await expect(A.locator(".ct-pot")).toHaveCount(0);
+  await expect(A.locator(".ct-dock")).toBeHidden();
+  await startChips(A, "500");
+  const me = await A.evaluate(() => window.cardTable.player);
+  expect((await state(A)).bank.chips[me]).toBe(500);
+  await expect(A.locator(".ct-plate.ct-me .ct-plate-chips")).toHaveText("500");
+  await expect(A.locator(".ct-pot")).toHaveCount(1);
+  await expect(A.locator(".ct-dock")).toBeVisible();
+  expect(A.errors).toEqual([]);
+});
+
+test("a bet from the dock goes into the pot, with a note by it; the host awards the pot", async ({ context }) => {
+  const A = await tab(context), B = await tab(context);
+  await host(A);
+  await join(B, A.url(), "Ana");
+  await seat(A, B, "Ana");
+  await startChips(A);
+  // Ana bets 120: the pot and her plate change on both screens, and a note says so
+  await expect(B.locator(".ct-dock")).toBeVisible();
+  await bet(B, 120);
+  await expect(A.locator(".ct-pot .ct-pot-amt")).toHaveText("120");
+  await expect(A.locator(".ct-note", { hasText: "bet" })).toContainText("Ana bet 120 → Pot");
+  await expect(B.locator(".ct-plate.ct-me .ct-plate-chips")).toHaveText("880");
+  // the host gives it to Ana
+  await A.locator(".ct-pot").click();
+  await A.locator(".ct-winner", { hasText: "Ana" }).click();
+  await A.getByRole("button", { name: "Give it to Ana" }).click();
+  await settle(A);
+  const ana = (await state(A)).seats.find((s) => s.name === "Ana").player;
+  expect((await state(B)).bank.chips[ana]).toBe(1000);
+  // a player can't award: their pot card does nothing
+  await B.locator(".ct-pot").click();
+  await expect(B.locator(".ct-bank-sheet")).toHaveCount(0);
+  expect([...A.errors, ...B.errors]).toEqual([]);
+});
+
+test("the host's Chips sheet: set a count, a rebuy, a new pot, and putting them away", async ({ context }) => {
+  const A = await tab(context);
+  await host(A);
+  await startChips(A);
+  const me = await A.evaluate(() => window.cardTable.player);
+  await A.getByRole("button", { name: "Chips", exact: true }).click();
+  await A.locator(".ct-prow-n").first().fill("750");
+  await A.locator(".ct-prow-n").first().press("Enter");
+  await settle(A);
+  expect((await state(A)).bank.chips[me]).toBe(750);
+  await A.locator(".ct-bank-sheet summary", { hasText: "Give everyone more" }).click();
+  await A.locator(".ct-bank-sheet [data-amt=more]").fill("100");
+  await A.getByRole("button", { name: "Give", exact: true }).click();
+  await settle(A);
+  expect((await state(A)).bank.chips[me]).toBe(850);
+  await A.getByRole("button", { name: "Chips", exact: true }).click();
+  await A.locator(".ct-bank-sheet summary", { hasText: "Add a pot" }).click();
+  await A.getByRole("button", { name: "Add", exact: true }).click();
+  await settle(A);
+  await expect(A.locator(".ct-pot")).toHaveCount(2);
+  await A.getByRole("button", { name: "Chips", exact: true }).click();
+  await A.locator(".ct-bank-sheet summary", { hasText: "Put the chips away" }).click();
+  await A.locator(".ct-bank-sheet [data-end]").click();
+  await settle(A);
+  expect((await state(A)).bank).toBeNull();
+  await expect(A.locator(".ct-pot")).toHaveCount(0);
+  await expect(A.locator(".ct-dock")).toBeHidden();
+});
+
+test("history: every change has a line; the host rewinds and restores, cards and chips together", async ({ context }) => {
+  const A = await tab(context);
+  await host(A);
+  await A.evaluate(() => window.cardTable.dispatch({ type: "deal", pile: "deck", count: 2, seats: ["s0"] }));
+  await startChips(A);
+  await bet(A, 40);
+  await A.locator("#history").click();
+  const lines = A.locator(".ct-h-list li");
+  await expect(lines.nth(0)).toContainText("Mike bet 40 → Pot");
+  await expect(lines.nth(1)).toContainText("handed out chips");
+  await expect(lines.nth(2)).toContainText("dealt 2 cards each");
+  // back to just after the deal: no chips yet, the cards still dealt
+  await lines.nth(2).getByRole("button", { name: "rewind to here" }).click();
+  await settle(A);
+  expect((await state(A)).bank ?? null).toBeNull();
+  expect((await state(A)).hands.s0.length).toBe(2);
+  await expect(lines.nth(0)).toHaveClass(/ct-h-rewound/);
+  // and forward again
+  await lines.nth(0).getByRole("button", { name: "restore to here" }).click();
+  await settle(A);
+  expect((await state(A)).bank.pots[0].chips).toBe(40);
+  // undo is a rewind of one line
+  await A.getByRole("button", { name: "Undo" }).click();
+  await settle(A);
+  expect((await state(A)).bank.pots[0].chips).toBe(0);
+  await expect(lines.nth(0)).toHaveClass(/ct-h-rewound/);
+  expect(A.errors).toEqual([]);
+});
+
+test("the history never names a card someone is hiding", async ({ context }) => {
+  const A = await tab(context);
+  await host(A);
+  await A.evaluate(() => {
     const t = window.cardTable; t.reset(2);
     t.dispatch({ type: "sit", seat: "s1", player: "p2", name: "Ana" });
+    t.dispatch({ type: "deal", pile: "deck", count: 1, seats: ["s1"] });
+    t.dispatch({ type: "setHandLocked", seat: "s1", locked: false });
+    t.dispatch({ type: "moveCards", cards: [t.state.hands.s1[0]], to: { hand: "s0" } });
   });
-  await settle(page);
-  return errors;
-}
-const settle = (page) => page.waitForTimeout(500);
-const state = (page) => page.evaluate(() => window.cardTable.state);
-const amounts = async (page) => Object.values((await state(page)).chips).map((c) => c.amount).sort((a, b) => a - b);
-const stackSel = (id) => `.ct-chips[data-chip="${id}"]`;
-async function middle(page, sel) {
-  const b = await page.locator(sel).boundingBox();
-  return { x: b.x + b.width / 2, y: b.y + b.height / 2 };
-}
-const make = (page, id, amount, to) => page.evaluate(([id, amount, to]) => window.cardTable.dispatch({ type: "makeChips", id, amount, to }), [id, amount, to]);
-
-test("the host's new chips go in the middle, onto the stack already there", async ({ page }) => {
-  const errors = await open(page);
-  for (const v of ["500", "250"]) {
-    await page.getByRole("button", { name: "New chips" }).click();
-    await page.locator(".ct-count-in").fill(v);
-    await page.getByRole("button", { name: `Put ${v} in the middle` }).click();
-    await settle(page);
-  }
-  const s = await state(page);
-  const all = Object.values(s.chips);
-  expect(all.map((c) => c.amount)).toEqual([750]);
-  expect(Math.abs(all[0].x - CX)).toBeLessThan(200);
-  expect(Math.abs(all[0].y - CY)).toBeLessThan(5);
-  expect(errors).toEqual([]);
+  await A.locator("#history").click();
+  const text = await A.locator(".ct-h-list").innerText();
+  expect(text).toContain("took a card from Ana");
+  expect(text).not.toMatch(/[A2-9JQK10]+[♠♥♦♣]/);
 });
 
-// open a stack's menu and pick an item
-async function menuOn(page, id, item) {
-  await page.click(`${stackSel(id)} .ct-chips-amt`);
-  await page.getByRole("button", { name: item }).click();
-}
-// take some off a stack into a new stack beside it
-async function take(page, id, amount) {
-  await menuOn(page, id, "Take…");
-  await page.locator(".ct-count-in").fill(String(amount));
-  await page.getByRole("button", { name: `Take ${amount}` }).click();
-  await settle(page);
-}
-
-test("take some off a stack on the felt or in your hand: a new stack beside it", async ({ page }) => {
-  const errors = await open(page);
-  await make(page, "pot", 300, { x: CX, y: CY - 60 });
-  await make(page, "other", 5, { x: CX + 56, y: CY - 60 });
-  await make(page, "mine", 100, { hand: "s0" });
-  await make(page, "last", 7, { hand: "s0" });
-  await settle(page);
-  await take(page, "pot", 120);
-  let s = await state(page);
-  expect(s.chips.pot.amount).toBe(180);
-  const got = Object.values(s.chips).find((c) => c.amount === 120);
-  // to its right on screen, past the stack already there, level with it
-  expect(got.x).toBeGreaterThan(CX + 80);
-  expect(Math.abs(got.y - (CY - 60))).toBeLessThan(1);
-  // in your hand: right after the stack it came off
-  await take(page, "mine", 30);
-  s = await state(page);
-  expect(s.chipHands.s0.map((id) => s.chips[id].amount)).toEqual([70, 30, 7]);
-  expect(errors).toEqual([]);
-});
-
-test("split a stack into even stacks, like cards: on the felt and in your hand", async ({ page }) => {
-  const errors = await open(page);
-  await make(page, "pot", 1000, { x: CX, y: CY - 60 });
-  await make(page, "mine", 10, { hand: "s0" });
-  await settle(page);
-  await menuOn(page, "pot", "Split…");
-  await page.getByRole("button", { name: "more" }).click();
-  await page.getByRole("button", { name: "Split into 3" }).click();
-  await settle(page);
-  let s = await state(page);
-  const onFelt = Object.values(s.chips).filter((c) => !s.chipHands.s0.includes(c.id));
-  expect(onFelt.map((c) => c.amount).sort()).toEqual([333, 333, 334]);
-  // side by side across the view
-  const ys = onFelt.map((c) => c.y), xs = onFelt.map((c) => c.x).sort((a, b) => a - b);
-  expect(Math.max(...ys) - Math.min(...ys)).toBeLessThan(1);
-  expect(xs[1] - xs[0]).toBeGreaterThan(40);
-  // (it remembers the last count, as for cards)
-  await menuOn(page, "mine", "Split…");
-  await page.getByRole("button", { name: "Split into 3" }).click();
-  await settle(page);
-  s = await state(page);
-  expect(s.chipHands.s0.map((id) => s.chips[id].amount)).toEqual([4, 3, 3]);
-  expect(errors).toEqual([]);
-});
-
-test("carry a whole stack out of your hand onto another, and they join", async ({ page }) => {
-  await open(page);
-  await make(page, "mine", 250, { hand: "s0" });
-  await make(page, "pot", 340, { x: CX, y: CY - 60 });
-  await settle(page);
-  const from = await middle(page, `${stackSel("mine")} .ct-chips-art`), to = await middle(page, `${stackSel("pot")} .ct-chips-art`);
-  await page.mouse.move(from.x, from.y);
-  await page.mouse.down();
-  await page.mouse.move(from.x + 10, from.y - 20, { steps: 3 });
-  await page.mouse.move(to.x, to.y, { steps: 12 });
-  await page.waitForTimeout(150);
-  await expect(page.locator(stackSel("mine"))).toHaveClass(/ct-ringed/);
-  await expect(page.locator(`${stackSel("mine")} .ct-eye`)).toHaveCount(1);
-  await page.mouse.up();
-  await settle(page);
-  const s = await state(page);
-  expect(s.chips.pot.amount).toBe(590);
-  expect(s.chips.mine).toBeUndefined();
-});
-
-test("deal chips from the felt and from your hand: the same amount into each player's hand", async ({ page }) => {
-  await open(page);
-  await make(page, "bank", 1000, { x: CX, y: CY });
-  await settle(page);
-  await menuOn(page, "bank", "Deal…");
-  await page.locator(".ct-count-in").fill("200");
-  await page.getByRole("button", { name: "Deal 200 each" }).click();
-  await settle(page);
-  let s = await state(page);
-  expect(s.chips.bank.amount).toBe(600);
-  for (const seat of ["s0", "s1"]) expect(s.chipHands[seat].map((id) => s.chips[id].amount)).toEqual([200]);
-  const mine = s.chipHands.s0[0];
-  await menuOn(page, mine, "Deal…");
-  await page.locator(".ct-count-in").fill("50");
-  await page.getByRole("button", { name: "Deal 50 each" }).click();
-  await settle(page);
-  s = await state(page);
-  expect(s.chipHands.s1.map((id) => s.chips[id].amount)).toEqual([200, 50]);
-  expect(s.chipHands.s0.map((id) => s.chips[id].amount)).toEqual([100, 50]);
-});
-
-test("a stack's amount can't be typed past what it has; steps land on round numbers", async ({ page }) => {
-  await open(page);
-  await make(page, "pot", 37, { x: CX, y: CY });
-  await settle(page);
-  await menuOn(page, "pot", "Take…");
-  const box = page.locator(".ct-count-in");
-  await box.fill("999");
-  // (taking leaves at least one: taking all of it is just moving the stack)
-  await expect(page.getByRole("button", { name: "Take 36" })).toBeVisible();
-  // (one at a time below 20; above that, by round amounts, landing on them)
-  await box.fill("12");
-  await page.getByRole("button", { name: "more" }).click();
-  await expect(box).toHaveValue("13");
-  await page.keyboard.press("Escape");
-  await make(page, "big", 500, { x: CX + 150, y: CY });
-  await settle(page);
-  await menuOn(page, "big", "Take…");
-  await box.fill("123");
-  await page.getByRole("button", { name: "more" }).click();
-  await expect(box).toHaveValue("130");
-});
-
-test("cards in a hand make room for its chips, and still drop between each other", async ({ page }) => {
-  await open(page);
-  await page.evaluate(() => window.cardTable.dispatch({ type: "deal", pile: "deck", count: 4, seats: ["s0"] }));
-  await make(page, "a", 100, { hand: "s0" });
-  await make(page, "b", 25, { hand: "s0" });
-  await settle(page);
-  const cards = await page.evaluate(() => window.cardTable.state.hands.s0);
-  const last = await page.locator(`.ct-card[data-id="${cards.at(-1)}"]`).boundingBox();
-  const chip = await page.locator(`${stackSel("a")} .ct-chips-art`).boundingBox();
-  // the chips stand clear to the right of the cards
-  expect(chip.x).toBeGreaterThan(last.x + last.width - 30);
-});
-
-test("Deal is there with nobody else at the table: it deals to you", async ({ page }) => {
-  await open(page);
-  await page.evaluate(() => window.cardTable.dispatch({ type: "stand", seat: "s1" }));
-  await make(page, "bank", 100, { x: CX, y: CY });
-  await settle(page);
-  await menuOn(page, "bank", "Deal…");
-  await page.locator(".ct-count-in").fill("40");
-  await page.getByRole("button", { name: "Deal 40 each" }).click();
-  await settle(page);
-  const s = await state(page);
-  expect(s.chips.bank.amount).toBe(60);
-  expect(s.chipHands.s0.map((id) => s.chips[id].amount)).toEqual([40]);
+test("the history and settings buttons sit at the top right", async ({ context }) => {
+  const A = await tab(context);
+  await host(A);
+  const h = await A.locator("#history").boundingBox(), s = await A.locator("#settings").boundingBox();
+  const w = A.viewportSize().width;
+  expect(h.y).toBeLessThan(40); expect(s.y).toBeLessThan(40);
+  expect(s.x + s.width).toBeGreaterThan(w - 40);
+  expect(h.x).toBeLessThan(s.x);
 });

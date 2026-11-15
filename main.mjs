@@ -1,14 +1,16 @@
 // The page: one shared table, played by hand. Pointer and keyboard input turn into table
 // actions (see table.mjs). A session (sync.mjs) applies them and keeps every player's table the
 // same; while you drag, where your cards are is streamed to everyone else as it happens.
-import { newTable, apply, shuffledOrder, locate, handCenter, seatAngle, seatSpot, seatRoom, clampToFelt, handLocked, chipHand, handChips, newColor, MAX_SEATS, RANKS, SUITS, CARD_W, CARD_H, CX, CY, FELT_H, RAIL } from "./table.mjs";
-import { createView, HAND_R, OWN_HAND_R, GRIP_REACH, handGap, handReach, spreadGap, eyeSVG, chipRowWidth, cardRoom, CHIP_STEP } from "./view.mjs";
+import { newTable, apply, shuffledOrder, locate, handCenter, seatAngle, seatSpot, seatRoom, clampToFelt, handLocked, newColor, potOf, chipsOf, refundShares, chipTotal, MAX_SEATS, RANKS, SUITS, CARD_W, CARD_H, CX, CY, FELT_H, RAIL } from "./table.mjs";
+import { createView, HAND_R, OWN_HAND_R, GRIP_REACH, handGap, handReach, spreadGap, eyeSVG } from "./view.mjs";
 import { suitDefs } from "./faces.mjs";
 import { startAboutDiagram } from "./about.mjs";
 import { connect } from "./net.mjs";
 import { hostSession, clientSession } from "./sync.mjs";
 import { openGate, closeGate, swatches, wireSwatches, openSettings } from "./gate.mjs";
 import { openShare, closeShare } from "./share.mjs";
+import { createBank } from "./bank.mjs";
+import { createHistory } from "./history.mjs";
 
 document.body.insertAdjacentHTML("afterbegin", suitDefs());
 
@@ -91,6 +93,10 @@ const WATCH = "watching";     // the view a spectator gets: no seat, no hand, no
 // whether you can touch the cards: only with a seat
 const seated = () => !!session?.seat;
 const view = createView(document.getElementById("table"), { viewer: me });
+// chips (off until the host hands them out) and the history panel
+const bank = createBank({ state: () => state, session: () => session, dispatch: (a) => dispatch(a), relayout: () => relayout() });
+const historyPanel = createHistory({ state: () => state, session: () => session }, document.getElementById("history"));
+view.potHint = (p) => (session?.isHost ? (p.chips ? "award ›" : "edit ›") : "");
 
 let drag = null;      // what's being carried
 let pending = null;   // a press that hasn't become a drag yet
@@ -105,7 +111,7 @@ const peekers = new Map(); // seat → the stacks another player is looking thro
 // with the action so everyone sees the same deal and the same stack turning over
 function dispatch(action, fx = null) { session?.dispatch(action, fx); }
 
-function onChange(next, fx, by) {
+function onChange(next, fx, by, line = null) {
   state = next;
   if (by) remote.delete(by); // their drop has landed
   // you see the table from your seat (a spectator from the first seat's side); the host alone at
@@ -116,6 +122,8 @@ function onChange(next, fx, by) {
   draw(fx ?? {});
   refreshBar();
   renderWatchers();
+  bank.changed(line);
+  historyPanel.render();
 }
 function undo() { if (!drag) { closeMenu(); session?.undo(); } }
 
@@ -152,7 +160,8 @@ function draw(o = {}) {
 function relayout() {
   const narrow = innerWidth < 600;
   view.stage.classList.add("ct-still");
-  view.layout(narrow ? 70 : 52, narrow ? 120 : 92);
+  // (with chips on, your dock sits above the bar)
+  view.layout(narrow ? 70 : 52, (narrow ? 120 : 92) + (bank?.dockHeight ?? 0));
   draw({ instant: true });
   requestAnimationFrame(() => view.stage.classList.remove("ct-still"));
 }
@@ -182,7 +191,7 @@ function sendDrag() {
   if (!drag?.active) { netRef?.send("drag", { seat: session.seat, end: true }); return; }
   const t = drag.target;
   netRef?.send("drag", {
-    seat: session.seat, cards: drag.cards ?? null, pile: drag.pile ?? null, whole: !!drag.whole, chip: drag.chip ?? null,
+    seat: session.seat, cards: drag.cards ?? null, pile: drag.pile ?? null, whole: !!drag.whole,
     x: drag.x, y: drag.y, rot: drag.rot, faceUp: drag.faceUp ?? null, inHand: !!drag.inHand,
     from: drag.from?.hand ? { hand: drag.from.hand } : null,
     target: t ? { hand: t.hand ?? null, slot: t.slot ?? null, pile: t.pile ?? null, stack: t.stack ?? null } : null,
@@ -225,6 +234,8 @@ function startHost(id, name, color) {
   if (st) for (const pile of Object.values(st.piles)) Object.assign(pile, clampToFelt(pile.x, pile.y));
   // a table saved before the twelve chip colors: each seat to the nearest of them
   if (st) for (const seat of st.seats) seat.color = newColor(seat.color);
+  // a table saved with the chip stacks this table used to have: those are gone
+  if (st) { delete st.chips; delete st.chipHands; }
   if (!st?.seats?.some((s) => s.player === player)) {
     // a new table has just your seat; a seat is added for each person who joins
     st = st ?? newTable(1);
@@ -313,6 +324,7 @@ function refreshBar() {
   viewerEl.closest(".ct-group").hidden = !(host && alone && state.seats.length > 1);
   document.getElementById("gather").hidden = !seated();
   document.getElementById("chips").hidden = !host;
+  document.body.classList.toggle("ct-is-host", host);
   document.getElementById("share").hidden = !session;
   if (host && !alone && me !== session.seat) { me = session.seat; view.viewer = me; draw(); }
   viewerEl.innerHTML = state.seats.map((s) =>
@@ -332,13 +344,8 @@ document.getElementById("gather").addEventListener("click", () => {
   dispatch({ type: "gather", id: newId(), x: 500, y: 500, rot: view.uprightRot() });
 });
 document.getElementById("share").addEventListener("click", (e) => openShare(e.currentTarget, tableCode));
-// the host's new chips: the counter opens over the button
-document.getElementById("chips").addEventListener("click", (e) => {
-  const r = e.currentTarget.getBoundingClientRect();
-  openMenu({ felt: true }, r.left, r.top - 240);
-  showNewChips();
-});
-
+// the host's chips: hand them out, then manage them
+document.getElementById("chips").addEventListener("click", () => bank.chipsSheet());
 // ---- helpers -------------------------------------------------------------------------------
 
 let idCounter = 0;
@@ -347,20 +354,11 @@ function newId() { return `p${player.slice(0, 4)}${Date.now().toString(36)}${(id
 
 // what a press on this element means: a card (the top one, for a stack) or a whole pile
 function targetOf(elem) {
-  const chipsEl = elem?.closest?.(".ct-chips");
-  if (chipsEl) return chipTarget(chipsEl.dataset.chip);
   const cardEl = elem?.closest?.(".ct-card");
   if (cardEl) return cardTarget(cardEl.dataset.id);
   const grip = elem?.closest?.(".ct-grip");
   if (grip && state.piles[grip.dataset.pile]) return { pile: grip.dataset.pile, whole: true };
   return null;
-}
-// a stack of chips; one in someone else's locked hand is theirs alone
-function chipTarget(id) {
-  if (!state.chips?.[id]) return null;
-  const hand = chipHand(state, id);
-  if (hand && hand !== session?.seat && handLocked(state, hand)) return null;
-  return { chip: id, ...(hand ? { chipHand: hand } : {}) };
 }
 function cardTarget(id) {
   const where = locate(state, id);
@@ -378,7 +376,6 @@ function cardTarget(id) {
 // the same target, after the table changed under it (a stack flipped, a card moved)
 function refresh(t) {
   if (!t) return null;
-  if (t.chip) return chipTarget(t.chip);
   if (t.whole) return state.piles[t.pile] ? t : null;
   return cardTarget(t.card);
 }
@@ -478,11 +475,8 @@ function dropTarget(x, y) {
     const hand = state.hands[seat.id], rest = hand.filter((id) => !carried.has(id));
     const shown = !!state.shownHands?.[seat.id];
     const r = rest.length, nIn = carried.size, m = r + nIn;
-    // (the hand's chips stand at its right end; its cards are centered on the rest)
-    const chipW = chipRowWidth(handChips(state, seat.id).length);
-    const room = cardRoom(state, i, n), reach = handReach(own, m, shown, room);
-    if (Math.abs(along) > reach.along + chipW / 2 || Math.abs(across) > reach.across) continue;
-    along = Math.min(along + chipW / 2, reach.along);
+    const room = seatRoom(i, n), reach = handReach(own, m, shown, room);
+    if (Math.abs(along) > reach.along || Math.abs(across) > reach.across) continue;
     // as in a spread stack: the slot that, in the hand as it's drawn with the carried cards in
     // it, puts the middle of what you carry under the pointer
     const gm = handGap(own, m, shown, room);
@@ -493,40 +487,11 @@ function dropTarget(x, y) {
   return null;
 }
 
-// where a carried chip stack would land at (x, y): onto another stack (they join), into a hand,
-// or (null) on the felt where it's let go
-function chipDropTarget(x, y) {
-  const place = view.chipPlacement(state);
-  const up = view.screenDir(0, -1), side = view.screenDir(1, 0);
-  let best = null, bestD = Infinity;
-  for (const [id, q] of place) {
-    if (id === drag.chip) continue;
-    // its column of chips, and its amount tag below
-    const u = (x - q.x) * up.x + (y - q.y) * up.y, v = (x - q.x) * side.x + (y - q.y) * side.y;
-    if (Math.abs(v) > 28 || u < -34 || u > 70) continue;
-    const d = Math.hypot(u - 15, v);
-    if (d < bestD) { bestD = d; best = { stack: id }; }
-  }
-  if (best) return best;
-  const n = state.seats.length;
-  for (let i = 0; i < n; i++) {
-    const seat = state.seats[i], own = seat.id === me;
-    const c = handCenter(i, n, own ? OWN_HAND_R : HAND_R), a = seatAngle(i, n);
-    const right = { x: Math.sin(a), y: -Math.cos(a) }, out = { x: Math.cos(a), y: Math.sin(a) };
-    const along = (x - c.x) * right.x + (y - c.y) * right.y, across = (x - c.x) * out.x + (y - c.y) * out.y;
-    const mine = chipHand(state, drag.chip) === seat.id;
-    const chipW = chipRowWidth(handChips(state, seat.id).length + (mine ? 0 : 1));
-    const reach = handReach(own, state.hands[seat.id].length, !!state.shownHands?.[seat.id], cardRoom(state, i, n));
-    if (Math.abs(along) <= reach.along + chipW / 2 && Math.abs(across) <= reach.across) return { hand: seat.id };
-  }
-  return null;
-}
-
 // ---- pointer input -------------------------------------------------------------------------
 
 const tableEl = document.getElementById("table");
 
-const keyOf = (t) => (t.chip ? `chip:${t.chip}` : t.felt ? "felt" : t.whole ? `pile:${t.pile}` : t.card);
+const keyOf = (t) => (t.felt ? "felt" : t.whole ? `pile:${t.pile}` : t.card);
 const HOLD_MS = 320; // press and hold on a stack this long and you pick up the whole stack
 
 tableEl.addEventListener("pointerdown", (e) => {
@@ -575,7 +540,7 @@ tableEl.addEventListener("pointermove", (e) => {
   if (drag) {
     drag.x = p.x + drag.offX; drag.y = p.y + drag.offY;
     const was = drag.target?.hand;
-    drag.target = drag.chip ? chipDropTarget(p.x, p.y) : dropTarget(p.x, p.y);
+    drag.target = dropTarget(p.x, p.y);
     drag.inHand = drag.from?.hand === me && drag.target?.hand === me;
     // over someone else's hand a card shows its back; flip it there to show it to just them
     if (drag.from?.hand && drag.target?.hand && drag.target.hand !== me && drag.target.hand !== was) drag.faceUp = false;
@@ -587,10 +552,7 @@ tableEl.addEventListener("pointermove", (e) => {
 function startDrag(t, at) {
   hovered = null;
   const place = placeNow();
-  if (t.chip) {
-    const q = view.chipPlacement(state).get(t.chip);
-    drag = { active: true, chip: t.chip, offX: q.x - at.x, offY: q.y - at.y };
-  } else if (t.whole) {
+  if (t.whole) {
     const pile = state.piles[t.pile];
     drag = { active: true, whole: true, pile: t.pile, rot: pile.rot, offX: pile.x - at.x, offY: pile.y - at.y };
   } else {
@@ -604,7 +566,7 @@ function startDrag(t, at) {
 }
 
 function flipCarried() {
-  if (!drag || drag.chip) return;
+  if (!drag) return;
   if (drag.faceUp != null) { drag.faceUp = !drag.faceUp; draw(); sendDrag(); return; }
   if (drag.whole) flipStack(drag.pile, { x: drag.x, y: drag.y });
   else dispatch({ type: "flip", cards: drag.cards });
@@ -623,7 +585,6 @@ tableEl.addEventListener("pointerup", (e) => {
   const d = drag; drag = null;
   sendDrag();
   const to = d.target;
-  if (d.chip) return dropChips(d);
   // two face-up cards put together start a stack that lies spread out, so both stay readable
   const startsSpread = (pileId, landingFaceUp) => {
     const p = state.piles[pileId];
@@ -656,14 +617,6 @@ tableEl.addEventListener("pointerup", (e) => {
     dispatch(act);
   }
 });
-// carried chips, let go: onto a stack (they join), into a hand (at the end of its chips), or down
-// on the felt
-function dropChips(d) {
-  const to = d.target;
-  const at = to?.stack ? { stack: to.stack } : to?.hand ? { hand: to.hand } : onFelt(d.x, d.y);
-  if (to?.hand && chipHand(state, d.chip) === to.hand) { draw(); return; }
-  dispatch({ type: "moveChips", id: d.chip, to: at });
-}
 tableEl.addEventListener("pointercancel", (e) => {
   if (drag && e.pointerId !== drag.pointerId) return;
   clearTimeout(pending?.timer); pending = null; drag = null; draw(); sendDrag();
@@ -747,8 +700,6 @@ function openMenu(t, x, y) {
   const items = [];
   const item = (label, key, fn, keepOpen = false) => items.push({ label, key, fn, keepOpen });
   const sep = () => { if (items.length && items.at(-1)) items.push(null); };
-  if (t.chip) chipItems(t, item, sep);
-  if (t.felt) item("New chips…", "", () => {}, true); // (replaced by the counter right away)
   const pile = t.pile ? state.piles[t.pile] : null;
   const c = t.card ? state.cards[t.card] : null;
   const look = () => item(c.privateTo === me ? "Stop peeking" : isStack(t) && !isSpread(t) ? "Peek top card" : "Peek", "P", () => toggleLook(t));
@@ -914,100 +865,7 @@ function split(pileId, n) {
   dispatch({ type: "split", pile: pileId, parts });
 }
 
-// ---- chips ---------------------------------------------------------------------------------
-
-const fmt = (v) => v.toLocaleString("en-US");
-const players = () => state.seats.filter((x) => x.player);
-// a chip stack's menu: take some into your hand, split it, deal from it; the host can also take
-// it off the table for good
-function chipItems(t, item, sep) {
-  const c = state.chips[t.chip];
-  // take some off into a stack of their own beside it; split it into even stacks; deal from it
-  if (c.amount > 1) {
-    item("Take…", "", () => showChips(t.chip, "take"), true);
-    item("Split…", "", () => showChips(t.chip, "split"), true);
-  }
-  if (c.amount >= Math.max(1, players().length)) item("Deal…", "", () => showChips(t.chip, "deal"), true);
-  if (session?.isHost) { sep(); item("Remove chips", "", () => dispatch({ type: "removeChips", id: t.chip })); }
-}
-
-let chipAmounts = { take: 10, deal: 100, make: 1000 };
-function showChips(id, what) {
-  const c = state.chips[id], total = c.amount, ps = players();
-  const each = Math.max(1, Math.floor(total / Math.max(1, ps.length)));
-  if (what === "take") {
-    counter({
-      title: `Take some of these ${fmt(total)} off into a new stack beside them`, typed: true,
-      value: Math.min(chipAmounts.take, total - 1), min: 1, max: total - 1, unit: () => "",
-      presets: [{ label: "Half", value: Math.floor(total / 2) }],
-      buttons: [{ primary: true, data: "take", label: (v) => `Take ${fmt(v)}`, run: (v) => { chipAmounts.take = v; takeBeside(id, v); } }],
-    });
-  } else if (what === "split") {
-    // as a stack of cards splits: into even stacks, side by side
-    const max = Math.min(total, 8);
-    counter({
-      title: "Cut into even stacks, side by side",
-      value: Math.max(2, Math.min(splitCount, max)), min: 2, max, unit: () => "stacks",
-      buttons: [{ primary: true, data: "split", label: (v) => `Split into ${v}`, run: (v) => { splitCount = v; splitChips(id, v); } }],
-    });
-  } else {
-    counter({
-      title: `Deal to each player, starting after you (${fmt(total)} here)`, typed: true,
-      value: Math.min(chipAmounts.deal, each), min: 1, max: each, unit: () => "each",
-      presets: [{ label: "Evenly", value: each }],
-      buttons: [{ primary: true, data: "deal", label: (v) => `Deal ${fmt(v)} each`, run: (v) => { chipAmounts.deal = v; dealChips(id, v); } }],
-    });
-  }
-}
-// some off a stack, as a new stack beside it: in a hand, just to its right; on the felt, to its
-// right on your screen, past any stack already there
-function takeBeside(id, amount) {
-  const c = state.chips[id], hand = chipHand(state, id);
-  if (hand) return dispatch({ type: "takeChips", from: id, amount, id: newId(), to: { hand, index: handChips(state, hand).indexOf(id) + 1 } });
-  const r = view.screenDir(1, 0), gap = CHIP_STEP + 6;
-  const taken = (p) => Object.values(state.chips).some((o) => o.id !== id && !chipHand(state, o.id) && Math.hypot(o.x - p.x, o.y - p.y) < gap * 0.6);
-  let spot = null;
-  for (let k = 1; k < 12 && (!spot || taken(spot)); k++) spot = clampToFelt(c.x + r.x * gap * k, c.y + r.y * gap * k, 70);
-  dispatch({ type: "takeChips", from: id, amount, id: newId(), to: spot });
-}
-// n stacks as even as whole chips allow (the first ones a chip bigger), side by side: in a hand,
-// next to each other where the stack was; on the felt, in a row across your view centered where it
-// was, like a split stack of cards
-function splitChips(id, n) {
-  const c = state.chips[id], hand = chipHand(state, id);
-  const sizes = Array.from({ length: n }, (_, k) => Math.floor(c.amount / n) + (k < c.amount % n ? 1 : 0));
-  const acts = [];
-  if (hand) {
-    const i = handChips(state, hand).indexOf(id);
-    for (let k = 1; k < n; k++) acts.push({ type: "takeChips", from: id, amount: sizes[k], id: newId(), to: { hand, index: i + k } });
-  } else {
-    const r = view.screenDir(1, 0), gap = CHIP_STEP + 6;
-    const spot = (k) => clampToFelt(c.x + r.x * (k - (n - 1) / 2) * gap, c.y + r.y * (k - (n - 1) / 2) * gap, 70);
-    acts.push({ type: "moveChips", id, to: spot(0) });
-    for (let k = 1; k < n; k++) acts.push({ type: "takeChips", from: id, amount: sizes[k], id: newId(), to: spot(k) });
-  }
-  dispatch({ type: "batch", actions: acts });
-}
-// around the table from the player after you, as cards are dealt
-function dealChips(id, amount) {
-  const n = state.seats.length, mi = Math.max(0, state.seats.findIndex((x) => x.id === me));
-  const seats = Array.from({ length: n }, (_, k) => state.seats[(mi + 1 + k) % n]).filter((x) => x.player).map((x) => x.id);
-  dispatch({ type: "dealChips", from: id, amount, seats, ids: seats.map(() => newId()) });
-}
-// the host's new chips go in the middle, beside the deck (onto the stack already there, if any)
-const BANK = { x: CX + 120, y: CY };
-function showNewChips() {
-  counter({
-    title: "New chips, in the middle", typed: true,
-    value: chipAmounts.make, min: 1, max: 1e7, unit: () => "",
-    presets: [100, 500, 1000].map((v) => ({ label: fmt(v), value: v })),
-    buttons: [{ primary: true, data: "make", label: (v) => `Put ${fmt(v)} in the middle`, run: (v) => {
-      chipAmounts.make = v;
-      const there = Object.values(state.chips ?? {}).find((c) => !chipHand(state, c.id) && Math.hypot(c.x - BANK.x, c.y - BANK.y) < 4);
-      dispatch({ type: "makeChips", id: newId(), amount: v, to: there ? { stack: there.id } : BANK });
-    } }],
-  });
-}
+// ---- chips: see bank.mjs ------------------------------------------------------------------
 
 // ---- who's watching, and what the host can do about each person -----------------------------
 
@@ -1034,7 +892,15 @@ tableEl.addEventListener("click", (e) => {
   if (!session?.isHost || e.target.closest?.(".ct-plate-edit")) return;
   const plate = e.target.closest?.(".ct-plate");
   const seat = plate && state.seats.find((x) => x.id === plate.dataset.seat);
-  if (seat?.player && seat.player !== player) openPersonMenu(seat.player, plate);
+  if (!seat?.player) return;
+  // with chips on: their chips, with the seat options a click further
+  if (bank.playerSheet(seat.player, { more: seat.player !== player ? () => openPersonMenu(seat.player, plate) : null })) return;
+  if (seat.player !== player) openPersonMenu(seat.player, plate);
+});
+// the host clicking a pot: award it
+tableEl.addEventListener("click", (e) => {
+  const pot = e.target.closest?.(".ct-pot");
+  if (pot) bank.potSheet(pot.dataset.pot);
 });
 
 // A spectator gets a banner across the top saying so, with a way to ask the host for a seat.

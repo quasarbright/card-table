@@ -13,7 +13,13 @@
 //   session.seat             the seat you're sitting in
 //   session.dispatch(action, fx)   fx: how to animate it (passed along to everyone)
 //   session.undo(), session.canUndo()   take back the table's last change, whoever made it
-import { apply, MAX_SEATS, touchesLockedHand, needsHost } from "./table.mjs";
+//   session.log, session.head  the history: one line per change, and the one the table is at
+//   session.goto(entryId)      rewind to just after that line, or restore forward to it (the host)
+//
+// The history works like my chips sketch's: rewinding keeps the later lines, crossed out, so you
+// can restore forward again; the next new change drops them. Undo is a rewind of one line.
+import { apply, MAX_SEATS, touchesLockedHand, needsHost, movesOthersChips } from "./table.mjs";
+import { describe, isMoney } from "./log.mjs";
 
 const HISTORY = 300;
 // who sits where isn't part of the game: undo never takes it back, and it's written into
@@ -25,7 +31,12 @@ const SEATING = new Set(["sit", "stand", "setSeats", "setPlayer", "setHandLocked
 //
 // me: { player, name, color }; hooks: { onChange(state, fx), onRoster({ host, online, watchers }), onAsk(player), save(state) }
 export function hostSession(net, state, me, hooks) {
-  const past = [];                 // [{ state, by }] before each change, newest last
+  // the history: lines (sent to everyone), the table right after each (kept here), and the table
+  // before the first line
+  const log = [];                  // [{ id, ts, by, parts, money }], oldest first
+  const snaps = new Map();         // line id → the table right after it
+  let base = state, head = -1, lineSeq = 0;
+  const headId = () => log[head]?.id ?? null;
   const peers = new Map();         // peer id → player id
   const people = new Map([[me.player, { name: me.name, color: me.color }]]); // player → name, color
   const banned = new Set();
@@ -37,23 +48,33 @@ export function hostSession(net, state, me, hooks) {
       // the host may lock or unlock anyone's hand
       const hostLocking = action.type === "setHandLocked" && by === seatOf(me.player);
       if (by && !hostLocking && touchesLockedHand(state, action, by)) throw new Error("locked hand");
-      // only the host makes chips or takes them away
-      if (by && by !== seatOf(me.player) && needsHost(action)) throw new Error("host only");
+      // only the host hands out chips, awards pots and the like; players move only their own
+      if (by && by !== seatOf(me.player) && (needsHost(action) || movesOthersChips(state, action, by))) throw new Error("host only");
       next = apply(state, action);
     } catch {
       if (from) net.send("reject", { id }, from);
       return false;
     }
+    let line = null;
     if (SEATING.has(action.type)) {
-      for (const p of past) { try { p.state = apply(p.state, action); } catch {} }
+      // seating is written into every earlier table too
+      const fix = (st) => { try { return apply(st, action); } catch { return st; } };
+      base = fix(base);
+      for (const [k, st] of snaps) snaps.set(k, fix(st));
     } else {
-      past.push({ state, by });
-      if (past.length > HISTORY) past.shift();
+      // something new: whatever was rewound past is gone for good
+      for (const e of log.splice(head + 1)) snaps.delete(e.id);
+      let parts;
+      try { parts = describe(state, action, by, next); } catch { parts = ["The table changed"]; }
+      line = { id: `l${++lineSeq}`, ts: Date.now(), by, parts, money: isMoney(action) };
+      log.push(line); snaps.set(line.id, next);
+      if (log.length > HISTORY) { const old = log.shift(); base = snaps.get(old.id); snaps.delete(old.id); }
+      head = log.length - 1;
     }
     state = next;
     hooks.save(state);
-    net.send("applied", { action, by, id, fx, depth: past.length });
-    hooks.onChange(state, fx, by);
+    net.send("applied", { action, by, id, fx, line });
+    hooks.onChange(state, fx, by, line);
     return true;
   }
 
@@ -92,20 +113,23 @@ export function hostSession(net, state, me, hooks) {
     roster();
   }
 
-  function undo() {
-    if (!past.length) return;
-    state = past.pop().state;
+  // the table as it stood right after line `i` (-1: before the first)
+  function goTo(i) {
+    if (i < -1 || i >= log.length || i === head) return;
+    head = i;
+    state = i < 0 ? base : snaps.get(log[i].id);
     hooks.save(state);
-    net.send("reset", { state, depth: past.length });
+    net.send("reset", { state, log, head: headId() });
     hooks.onChange(state, null, null);
   }
+  const undo = () => { if (head >= 0) goTo(head - 1); };
 
   // someone arrives: back in the seat they had, or watching
   net.on("hello", ({ player, name, color }, peer) => {
     if (banned.has(player)) { net.send("kicked", {}, peer); return; }
     peers.set(peer, player);
     people.set(player, { name, color });
-    net.send("welcome", { state, depth: past.length }, peer);
+    net.send("welcome", { state, log, head: headId() }, peer);
     roster();
   });
   // only people with a seat touch the table
@@ -125,13 +149,16 @@ export function hostSession(net, state, me, hooks) {
     get seat() { return seatOf(me.player); },
     dispatch(action, fx) { commit(action, seatOf(me.player), fx); },
     undo,
-    canUndo() { return past.length > 0; },
+    canUndo() { return head >= 0; },
+    get log() { return log; }, get head() { return headId(); },
+    goto(entryId) { goTo(log.findIndex((e) => e.id === entryId)); },
     online, seatPlayer, unseat, kick,
     canSeat: () => state.seats.some((s) => !s.player) || state.seats.length < MAX_SEATS,
     // start over from this table, with no history (tests)
     replace(next) {
-      past.length = 0; state = next; hooks.save(state);
-      net.send("reset", { state, depth: 0 });
+      log.length = 0; snaps.clear(); base = next; head = -1;
+      state = next; hooks.save(state);
+      net.send("reset", { state, log, head: null });
       hooks.onChange(state, { instant: true }, null);
     },
   };
@@ -140,7 +167,8 @@ export function hostSession(net, state, me, hooks) {
 // hooks: { onChange(state, fx, by), onWelcome(), onRoster({ online, watchers }), onLost(), onKicked() }
 export function clientSession(net, me, hooks) {
   let confirmed = null, pending = [], shown = null;
-  let host = null, depth = 0, counter = 0; // depth: how many changes the host can undo
+  let host = null, counter = 0;
+  let log = [], head = null; // the host's history, and the line the table stands at
   const mySeat = () => shown?.seats.find((s) => s.player === me.player)?.id ?? null;
 
   // your changes the host hasn't confirmed yet, replayed on top of what it has
@@ -155,7 +183,7 @@ export function clientSession(net, me, hooks) {
 
   net.onJoin(hello);
   net.on("welcome", (m, peer) => {
-    host = peer; confirmed = m.state; depth = m.depth; pending = [];
+    host = peer; confirmed = m.state; log = m.log ?? []; head = m.head ?? null; pending = [];
     rebuild();
     hooks.onWelcome();
     hooks.onChange(shown, { instant: true }, null);
@@ -165,15 +193,20 @@ export function clientSession(net, me, hooks) {
     try { confirmed = apply(confirmed, m.action); } catch { hello(host); return; } // out of step: start over
     const mine = pending.some((p) => p.id === m.id);
     pending = pending.filter((p) => p.id !== m.id);
-    depth = m.depth;
+    if (m.line) {
+      // as on the host: a new line drops whatever was rewound past
+      const h = log.findIndex((e) => e.id === head);
+      log = [...log.slice(0, h + 1), m.line].slice(-HISTORY);
+      head = m.line.id;
+    }
     rebuild();
     // your own change already played its animation when you made it
-    hooks.onChange(shown, mine ? null : m.fx, m.by);
+    hooks.onChange(shown, mine ? null : m.fx, m.by, m.line);
   });
   net.on("reject", (m) => { pending = pending.filter((p) => p.id !== m.id); rebuild(); hooks.onChange(shown, null, null); });
   net.on("reset", (m, peer) => {
     if (peer !== host) return;
-    confirmed = m.state; depth = m.depth; pending = [];
+    confirmed = m.state; log = m.log ?? log; head = m.head ?? null; pending = [];
     rebuild();
     hooks.onChange(shown, null, null);
   });
@@ -196,6 +229,8 @@ export function clientSession(net, me, hooks) {
     },
     undo() { if (this.canUndo()) net.send("undo", {}, host); },
     ask() { if (host) net.send("ask", {}, host); },
-    canUndo() { return !!mySeat() && depth > 0 && !pending.length; },
+    canUndo() { return !!mySeat() && head != null && !pending.length; },
+    get log() { return log; }, get head() { return head; },
+    goto() {}, // rewinding to a line is the host's
   };
 }
