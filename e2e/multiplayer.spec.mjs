@@ -249,19 +249,19 @@ test("pick a color with your name; a joiner asking for a taken one gets a free o
   const A = await tab(context), B = await tab(context);
   await A.goto("/index.html?net=local");
   await A.fill("#ct-name", "Mike");
-  await A.locator('.ct-swatch[data-color="#a3d977"]').click();
+  await A.locator('.ct-swatch[data-color="#84cc16"]').click();
   await A.getByRole("button", { name: "Open a table" }).click();
   await A.waitForFunction(() => !!window.cardTable?.session);
-  expect((await state(A)).seats[0].color).toBe("#a3d977");
+  expect((await state(A)).seats[0].color).toBe("#84cc16");
   await B.goto(A.url());
   await B.fill("#ct-name", "Ana");
-  await B.locator('.ct-swatch[data-color="#a3d977"]').click();
+  await B.locator('.ct-swatch[data-color="#84cc16"]').click();
   await B.getByRole("button", { name: "Join table" }).click();
   await B.waitForFunction(() => window.cardTable?.session?.connected);
   await seat(A, B, "Ana");
   const seats = (await state(A)).seats;
   expect(seats[1].name).toBe("Ana");
-  expect(seats[1].color).not.toBe("#a3d977");
+  expect(seats[1].color).not.toBe("#84cc16");
 });
 
 test("the pencil by your name changes your name and color for everyone", async ({ context }) => {

@@ -1,7 +1,7 @@
 // The page: one shared table, played by hand. Pointer and keyboard input turn into table
 // actions (see table.mjs). A session (sync.mjs) applies them and keeps every player's table the
 // same; while you drag, where your cards are is streamed to everyone else as it happens.
-import { newTable, apply, shuffledOrder, locate, handCenter, seatAngle, seatSpot, seatRoom, clampToFelt, handLocked, chipHand, handChips, MAX_SEATS, RANKS, SUITS, CARD_W, CARD_H, CX, CY, FELT_H, RAIL } from "./table.mjs";
+import { newTable, apply, shuffledOrder, locate, handCenter, seatAngle, seatSpot, seatRoom, clampToFelt, handLocked, chipHand, handChips, newColor, MAX_SEATS, RANKS, SUITS, CARD_W, CARD_H, CX, CY, FELT_H, RAIL } from "./table.mjs";
 import { createView, HAND_R, OWN_HAND_R, GRIP_REACH, handGap, handReach, spreadGap, eyeSVG, chipRowWidth, cardRoom, CHIP_STEP } from "./view.mjs";
 import { suitDefs } from "./faces.mjs";
 import { startAboutDiagram } from "./about.mjs";
@@ -223,6 +223,8 @@ function startHost(id, name, color) {
   let st = hostSaved(id);
   // a table saved before the table was wide: bring its stacks onto the felt
   if (st) for (const pile of Object.values(st.piles)) Object.assign(pile, clampToFelt(pile.x, pile.y));
+  // a table saved before the twelve chip colors: each seat to the nearest of them
+  if (st) for (const seat of st.seats) seat.color = newColor(seat.color);
   if (!st?.seats?.some((s) => s.player === player)) {
     // a new table has just your seat; a seat is added for each person who joins
     st = st ?? newTable(1);
@@ -1245,7 +1247,7 @@ startAboutDiagram();
 {
   let id = location.hash.slice(1).replace(/[^A-Za-z0-9]/g, "");
   if (!id && params.get("t")) { id = params.get("t"); history.replaceState(null, "", tableUrl(id)); }
-  const name = read("name") ?? "", color = read("color") ?? undefined;
+  const name = read("name") ?? "", color = read("color") ? newColor(read("color")) : undefined;
   const keep = (n, c) => { write("name", n); write("color", c); };
   if (id && hostSaved(id) && name) startHost(id, name, color);
   else if (id && read(`joined:${id}`) && name) startJoin(id, name, color);

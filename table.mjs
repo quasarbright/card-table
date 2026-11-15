@@ -33,7 +33,21 @@ export const CARD_W = 70, CARD_H = 98;
 export const SUITS = ["S", "H", "D", "C"];
 export const RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"];
 // the colors players can choose from; a new seat takes the first one nobody has
-export const SEAT_COLORS = ["#f0b84a", "#6cb8f0", "#f0708c", "#b392f0", "#f28a52", "#4fd1c5", "#a3d977", "#e88fd9"];
+// (the same twelve as my chips sketch, in its order, named for screen readers and tooltips)
+export const SEAT_COLORS = [
+  "#ef4444", "#f97316", "#facc15", "#84cc16", "#22c55e", "#14b8a6",
+  "#06b6d4", "#3b82f6", "#6366f1", "#a855f7", "#ec4899", "#e7e5e4",
+];
+export const COLOR_NAMES = {
+  "#ef4444": "red", "#f97316": "orange", "#facc15": "yellow", "#84cc16": "lime",
+  "#22c55e": "green", "#14b8a6": "teal", "#06b6d4": "cyan", "#3b82f6": "blue",
+  "#6366f1": "indigo", "#a855f7": "purple", "#ec4899": "pink", "#e7e5e4": "white",
+};
+// the colors new seats get, in turn: ones far apart, so the first few players are easy to tell apart
+const SEAT_ORDER = ["#3b82f6", "#ef4444", "#facc15", "#22c55e", "#a855f7", "#f97316", "#14b8a6", "#ec4899", "#e7e5e4", "#84cc16", "#06b6d4", "#6366f1"];
+// the eight colors this table had before, each to the nearest of the twelve (saved tables and names)
+const OLD_COLORS = { "#f0b84a": "#facc15", "#6cb8f0": "#3b82f6", "#f0708c": "#ef4444", "#b392f0": "#a855f7", "#f28a52": "#f97316", "#4fd1c5": "#14b8a6", "#a3d977": "#84cc16", "#e88fd9": "#ec4899" };
+export const newColor = (c) => OLD_COLORS[c] ?? c;
 export const MAX_SEATS = 6;
 
 // seat i of n: which side, where along it (x), and how wide its share of the side is
@@ -72,7 +86,7 @@ export function clampToFelt(x, y, margin = 50, ext = { x: 0, y: 0 }) {
 }
 
 export function makeSeats(n) {
-  return Array.from({ length: n }, (_, i) => ({ id: `s${i}`, name: `Player ${i + 1}`, color: SEAT_COLORS[i], player: null }));
+  return Array.from({ length: n }, (_, i) => ({ id: `s${i}`, name: `Player ${i + 1}`, color: SEAT_ORDER[i], player: null }));
 }
 
 export function deckCards() {
@@ -400,7 +414,7 @@ const ACTIONS = {
       seats[i].name = s.seats[i].name; seats[i].player = s.seats[i].player ?? null; seats[i].color = s.seats[i].color;
     }
     for (let i = s.seats.length; i < n; i++) {
-      seats[i].color = SEAT_COLORS.find((c) => !seats.slice(0, i).some((q) => q.color === c));
+      seats[i].color = SEAT_ORDER.find((c) => !seats.slice(0, i).some((q) => q.color === c));
     }
     const leftover = s.seats.slice(n).flatMap((seat) => s.hands[seat.id]);
     const hands = Object.fromEntries(seats.map((seat) => [seat.id, s.hands[seat.id] ?? []]));

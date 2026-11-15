@@ -184,12 +184,12 @@ test("sit puts a player in one seat; fewer seats keep the players that stay", ()
 });
 
 test("colors: a seat can take any color nobody else has; new seats get a free one", () => {
-  let s = apply(newTable(2), { type: "sit", seat: "s0", player: "me", name: "Mo", color: "#a3d977" });
-  assert.equal(s.seats[0].color, "#a3d977");
-  s = apply(s, { type: "sit", seat: "s1", player: "you", name: "Ann", color: "#a3d977" }); // taken: keeps its own
-  assert.equal(s.seats[1].color, "#6cb8f0");
-  assert.throws(() => apply(s, { type: "setPlayer", seat: "s1", color: "#a3d977" }));
-  s = apply(s, { type: "setPlayer", seat: "s1", name: "Annie", color: "#f0b84a" });
+  let s = apply(newTable(2), { type: "sit", seat: "s0", player: "me", name: "Mo", color: "#84cc16" });
+  assert.equal(s.seats[0].color, "#84cc16");
+  s = apply(s, { type: "sit", seat: "s1", player: "you", name: "Ann", color: "#84cc16" }); // taken: keeps its own
+  assert.equal(s.seats[1].color, "#ef4444");
+  assert.throws(() => apply(s, { type: "setPlayer", seat: "s1", color: "#84cc16" }));
+  s = apply(s, { type: "setPlayer", seat: "s1", name: "Annie", color: "#a855f7" });
   assert.equal(s.seats[1].name, "Annie");
   s = apply(s, { type: "setSeats", n: 3 });
   assert.equal(new Set(s.seats.map((x) => x.color)).size, 3);
@@ -197,7 +197,7 @@ test("colors: a seat can take any color nobody else has; new seats get a free on
   const open = s.seats[2].color;
   s = apply(s, { type: "setPlayer", seat: "s1", color: open });
   assert.equal(s.seats[1].color, open);
-  assert.equal(s.seats[2].color, "#f0b84a");
+  assert.equal(s.seats[2].color, "#a855f7");
 });
 
 test("a card can go into the middle of a stack, counted before it leaves", () => {
@@ -275,4 +275,13 @@ test("chips: a removed seat's chips come to the middle", () => {
   assert.equal(chipHand(s, "c"), null);
   assert.equal(s.chips.c.amount, 50);
   assert.equal(s.chipHands.s2, undefined);
+});
+
+test("colors: the twelve from chips; the first seats get ones far apart; old colors map to the nearest", async () => {
+  const { SEAT_COLORS, COLOR_NAMES, newColor } = await import("./table.mjs");
+  assert.equal(SEAT_COLORS.length, 12);
+  assert.ok(SEAT_COLORS.every((c) => COLOR_NAMES[c]));
+  assert.deepEqual(newTable(4).seats.map((x) => COLOR_NAMES[x.color]), ["blue", "red", "yellow", "green"]);
+  assert.equal(newColor("#6cb8f0"), "#3b82f6");
+  assert.equal(newColor("#ef4444"), "#ef4444");
 });

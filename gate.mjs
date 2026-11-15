@@ -1,7 +1,7 @@
 // The screens in front of the table: home (join with a code, open your own, your tables),
 // putting your name in to join a friend's table, and what to do when a table can't be reached.
 // A page of their own, over the table, the way my chips sketch does it.
-import { SEAT_COLORS } from "./table.mjs";
+import { SEAT_COLORS, COLOR_NAMES } from "./table.mjs";
 import { faceSVG } from "./faces.mjs";
 
 let el = null;
@@ -10,8 +10,8 @@ let el = null;
 export function swatches(selected, taken = {}) {
   return `<div class="ct-swatches" role="radiogroup" aria-label="Your color">` + SEAT_COLORS.map((c) => {
     const who = taken[c];
-    return `<button type="button" role="radio" class="ct-swatch" style="--seat:${c}" data-color="${c}" aria-checked="${c === selected}"` +
-      (who ? ` disabled title="${esc(who)} has this color"` : ` title="Pick this color"`) + `></button>`;
+    return `<button type="button" role="radio" class="ct-swatch" style="--seat:${c}" data-color="${c}" aria-checked="${c === selected}" aria-label="${COLOR_NAMES[c]}"` +
+      (who ? ` disabled title="${esc(who)} has ${COLOR_NAMES[c]}"` : ` title="${COLOR_NAMES[c][0].toUpperCase() + COLOR_NAMES[c].slice(1)}"`) + `></button>`;
   }).join("") + `</div>`;
 }
 export function wireSwatches(root, onPick) {

@@ -331,9 +331,10 @@
     .ct-share .ct-pop > .ct-act { width: 100%; }
 
     /* color swatches, drawn as poker chips: the home screen, joining, and the pencil's editor */
-    .ct-swatches { display: flex; flex-wrap: wrap; gap: 8px; margin: 2px 0 16px; }
+    /* twelve, in two rows of six, as in chips */
+    .ct-swatches { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; margin: 2px 0 16px; justify-items: center; }
     .ct-swatch {
-      position: relative; width: 34px; height: 34px; padding: 0; border-radius: 50%; cursor: pointer; border: 0;
+      position: relative; width: 100%; max-width: 46px; aspect-ratio: 1; padding: 0; border-radius: 50%; cursor: pointer; border: 0;
       background: var(--seat);
       background-image: repeating-conic-gradient(from 7deg, transparent 0 30deg, #fffffff0 30deg 45deg);
       box-shadow: 0 2px 6px #0006, inset 0 0 0 1px #0003;
@@ -344,7 +345,6 @@
       box-shadow: 0 0 0 1.5px #ffffffd0, inset 0 0 0 1px #0002;
     }
     .ct-swatch[aria-checked="true"] { box-shadow: 0 0 0 2.5px var(--panel), 0 0 0 5px var(--text); }
-    @media (max-width: 420px) { .ct-swatches { gap: 6px; } .ct-swatch { width: 30px; height: 30px; } }
     .ct-swatch:disabled { opacity: .3; cursor: not-allowed; }
     .ct-swatch:disabled::before { content: "✕"; position: absolute; inset: 0; z-index: 1; display: grid; place-items: center; font-weight: 800; color: var(--text); }
     .ct-swatch:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
@@ -417,7 +417,7 @@
     .ct-editor .ct-pop { width: 296px; display: block; }
     .ct-editor .ct-share-url { width: 100%; box-sizing: border-box; font-size: .95rem; margin: 6px 0 12px; }
     .ct-editor .ct-swatches { margin-top: 8px; }
-    .ct-editor .ct-swatch { width: 26px; height: 26px; }
+    .ct-editor .ct-swatches { gap: 8px; }
 
     /* ---- home, joining and error screens: a page of their own, over the table ---- */
     .ct-gate {
